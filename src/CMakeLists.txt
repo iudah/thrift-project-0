@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Thrift-Project VERSION 0.0.3)
+project(Thrift-Project VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,7 +14,7 @@ FetchContent_Declare(
 
 configure_file(Thrift-Project.h.in Thrift-Project.h)
 
-add_executable(thrift main.c json_parser.c)
+add_executable(thrift main.c json_parser.c array.c book.c map.c)
 
 install(TARGETS thrift DESTINATION bin)
 
@@ -22,7 +22,7 @@ FetchContent_MakeAvailable(gtest)
 
 enable_testing()
 
-add_executable(thrift-project-test test/thrift-test.cpp json_parser.c)
+add_executable(thrift-project-test test/thrift-test.cpp json_parser.c array.c map.c)
 
 target_link_libraries(thrift-project-test GTest::gtest_main)
 
