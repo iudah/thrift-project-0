@@ -1,9 +1,12 @@
 #include "book.h"
 #include "json_parser.h"
+#include "sha256.h"
+#include <memory.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 // static /*_Thread_local*/ map_pair_t *originator;
 
@@ -67,6 +70,53 @@ void effect_tx(map_t *balances, tx_t *tx) {
     reciever->value.value.number += tx->amount;
 }
 
+void hash_txs(FILE *f, char hash[65]) {
+  fseek(f, 0, SEEK_SET);
+
+  struct stat st;
+  fstat(fileno(f), &st);
+
+  unsigned char bytes[st.st_size];
+  
+  fread(bytes, 1, st.st_size, f);
+
+// char * b=(char*)bytes;
+//   while((fgets(b,256,  f))){
+//     b+=strlen(b);
+//   }
+
+  SHA256_CTX ctx;
+
+  sha256_init(&ctx);
+  char buf[256];
+
+  // while((fgets(buf,sizeof(buf),  f))){
+sha256_update(&ctx, bytes, sizeof(bytes));
+// }
+  sha256_final(&ctx, (uint8_t *)hash);
+
+  FILE *hash_file = fopen("/mnt/sdcard/Jay/thrift-project-0/db/hash.hash", "w");
+  fwrite(hash, 65, 1, hash_file);
+  fclose(hash_file);
+}
+
+void print_hash(char *hash) {
+  for (int i = 0; i < 32; i++) {
+    printf("%x", hash[i]);
+  }
+}
+
+bool verify_hash(book_t *book,FILE *tx_file){char hash[65];
+  hash_txs(tx_file, hash);
+  for (int i = 0; i < 32; i++) {
+    if (hash[i] != book->hash[i]) {
+      printf("Error: Invalid record. Expected ");print_hash(hash);
+      printf(" got ");print_hash(book->hash);
+      puts(".\n");
+      return false;
+    }
+  }return true;}
+
 void load_txs(book_t *book) {
   FILE *tx_file = fopen("/mnt/sdcard/Jay/thrift-project-0/db/txs.json", "r");
 
@@ -75,7 +125,11 @@ void load_txs(book_t *book) {
 
   json_node_t *txs = parse_json(tx_file);
 
+bool is_valid_book=verify_hash(book, tx_file);
+
   fclose(tx_file);
+
+// if(!is_valid_book)return ;
 
   // json_node_t *txs = json_get(json, "balances");
 
@@ -98,6 +152,9 @@ void load_txs(book_t *book) {
     effect_tx(book->balances, &tx_);
     tx = tx->next_pair;
   }
+
+  
+
   return;
 }
 
@@ -108,10 +165,15 @@ book_t *load_book() {
 
   load_genesis(book);
 
+  FILE *hash_file = fopen("/mnt/sdcard/Jay/thrift-project-0/db/hash.hash", "r");
+  fread(book->hash, sizeof(book->hash), 1, hash_file);
+  fclose(hash_file);
+
   load_txs(book);
 
   return book;
 }
+
 
 void show_balances(book_t *book) {
   printf("Accounts                   Balances\n");
@@ -122,6 +184,10 @@ void show_balances(book_t *book) {
   while (!map_next((void **)&account, &bal)) {
     printf("%-18s %18f\n", account, bal->value.number);
   }
+
+  printf("Tx Hash: ");
+  print_hash(book->hash);
+  putchar('\n');
 }
 
 static char *empty_str = "";
@@ -155,16 +221,30 @@ int save_txs(book_t *book) {
   while (i < book->txs->length) {
     tx_t *tx = book->txs->values[i].value.ptr;
 
-    fprintf(tx_file,
-            "{\"from\":\"%s\",\"to\":\"%s\",\"value\":%f,\"for\":\"%s\","
-            "\"reward\":%s}\n",
-            tx->from, tx->to, tx->amount, tx->purpose,
-            tx->is_reward ? "true" : "false");
+    char tx_str[1024];
+
+    uint64_t len =
+        snprintf(tx_str, sizeof(tx_str),
+                 "{\"from\":\"%s\",\"to\":\"%s\",\"value\":%f,\"for\":\"%s\","
+                 "\"reward\":%s}\n",
+                 tx->from, tx->to, tx->amount, tx->purpose,
+                 tx->is_reward ? "true" : "false");
+fputs(tx_str,tx_file);
+    puts(tx_str);
 
     i++;
   }
 
+
   fclose(tx_file);
+
+tx_file = fopen("/mnt/sdcard/Jay/thrift-project-0/db/txs.json", "r");
+  hash_txs(tx_file, book->hash);
+  fclose(tx_file);
+
+  printf("New hash: ");
+  print_hash(book->hash);
+  putchar('\n');
 
   return 0;
 }

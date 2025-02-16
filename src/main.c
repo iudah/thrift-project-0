@@ -66,10 +66,12 @@ Version %d.%d.%d\n",
       }
       add_tx(book, tx.from, tx.to, tx.amount, tx.purpose);
       save_txs(book);
+      printf("Txs updated successfully.\n");
     } break;
     case 'r':
       add_reward(book);
       save_txs(book);
+      printf("Reward updated successfully.\n");
       break;
     case 'b':
       show_balances(book);

@@ -7,6 +7,7 @@
 typedef struct book {
   map_t *balances;
   array_t *txs;
+  char hash[65];
 } book_t;
 
 typedef struct {

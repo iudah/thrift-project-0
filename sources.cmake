@@ -1,0 +1,8 @@
+set(SOURCE_FILES 
+src/main.c
+src/sha256.c
+src/json_parser.c
+src/book.c
+src/array.c
+src/map.c
+)
