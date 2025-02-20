@@ -3,11 +3,13 @@
 
 #include <stdint.h>
 
-typedef enum { PTR_V, NUMBER_V } ds_value_enum_t;
+typedef enum { PTR_V, NUMBER_V, INT_V, BOOLEAN_V } ds_value_enum_t;
 
 union ds_val {
   void *ptr;
   double number;
+  int d;
+  bool boolean;
 };
 
 typedef struct ds_value {
