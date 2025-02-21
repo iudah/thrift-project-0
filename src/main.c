@@ -33,6 +33,10 @@ Version %d.%d.%d\n",
   }
 
   book_t *book = load_book();
+  if (!book) {
+    fprintf(stderr, "book load failed.");
+    return -1;
+  }
 
   static struct option long_options[] = {{"add-tx", required_argument, 0, 'a'},
                                          {"add-reward", no_argument, 0, 'r'},
@@ -65,12 +69,12 @@ Version %d.%d.%d\n",
         }
       }
       add_tx(book, tx.from, tx.to, tx.amount, tx.purpose);
-      save_txs(book);
+      save_block(book);
       printf("Txs updated successfully.\n");
     } break;
     case 'r':
       add_reward(book);
-      save_txs(book);
+      save_block(book);
       printf("Reward updated successfully.\n");
       break;
     case 'b':
