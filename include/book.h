@@ -10,6 +10,8 @@
 #ifndef BOOK_H
 #define BOOK_H
 
+#include <time.h>
+
 #include "array.h"
 #include "map.h"
 
@@ -36,6 +38,7 @@ typedef struct book {
   map_t *balances; /**< Map of account names to balance values */
   struct block
       block; /**< SHA-256 hash of transaction history (null-terminated) */
+  time_t last_block_time;
 } book_t;
 
 /**

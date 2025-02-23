@@ -1,6 +1,6 @@
 #include "book.h"
-#include "json_parser.h"
-#include "sha256.h"
+
+#include <errno.h>
 #include <memory.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -8,6 +8,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+
+#include "error.h"
+#include "json_parser.h"
+#include "sha256.h"
 
 #define HASH_STR_LEN 65
 #define HASH_BYTE_LEN 33
@@ -17,7 +21,7 @@
 #define BLOCKS_FILE_PATH "/mnt/sdcard/Jay/thrift-project-0/db/blocks.json"
 #define BLOCKS_TMP_FILE_PATH "/mnt/sdcard/Jay/thrift-project-0/db/~blocks.json"
 #define HASH_FILE_PATH "/mnt/sdcard/Jay/thrift-project-0/db/hash.hash"
-#define INCOMPLETE_BLOCK_FILE_PATH                                             \
+#define INCOMPLETE_BLOCK_FILE_PATH \
   "/mnt/sdcard/Jay/thrift-project-0/db/incomplete_block.json"
 
 char *hash_to_string(char *hash, char *buf, int buffer_sz);
@@ -26,7 +30,7 @@ bool load_genesis(book_t *book) {
   FILE *genesis_file = fopen(GENESIS_FILE_PATH, "r");
 
   if (!genesis_file) {
-    perror("thrift could not open genesis.json");
+    LOG_ERROR("Could not open genesis.json: %s", strerror(errno));
     return false;
   }
 
@@ -58,7 +62,7 @@ bool effect_tx(map_t *balances, tx_t *tx) {
     map_pair_t *originator_pair =
         map_get(balances, "originator", (void *)strcmp);
     if (!originator_pair) {
-      perror("Could not get originator account.");
+      LOG_ERROR("Originator account missing in reward transaction");
       return false;
     }
     originator_pair->value.value.number += tx->amount;
@@ -67,14 +71,14 @@ bool effect_tx(map_t *balances, tx_t *tx) {
 
   map_pair_t *sender = map_get(balances, tx->from, (void *)strcmp);
   if (!sender) {
-    printf("account (%s) not found", tx->from);
+    LOG_ERROR("Sender account '%s' not found", tx->from);
     return false;
   }
 
   volatile double net = tx->amount + tx->amount * 1e-6;
   if (sender->value.value.number < net) {
-    printf("%s: insufficient funds: %f < %f", tx->from, net,
-           sender->value.value.number);
+    LOG_ERROR("Insufficient funds for %s: %.2f < required %.2f", tx->from,
+              sender->value.value.number, net);
     return false;
   }
 
@@ -141,18 +145,40 @@ bool verify_hash(book_t *book, FILE *tx_file) {
     return true;
   }
 
-  printf("Error: Invalid record. Expected %s got %s\n",
-         hash_to_string(hash, (char[HASH_STR_LEN]){0}, HASH_STR_LEN),
-         hash_to_string(book->block.parent_hash, (char[HASH_STR_LEN]){0},
-                        HASH_STR_LEN));
+  char expected_hash[HASH_STR_LEN], actual_hash[HASH_STR_LEN];
+  LOG_ERROR("Hash verification failed\nExpected: %s\nActual:   %s",
+            hash_to_string(hash, expected_hash, HASH_STR_LEN),
+            hash_to_string(book->block.parent_hash, actual_hash, HASH_STR_LEN));
   return false;
 }
 
-bool parse_block(book_t *book, FILE *blocks_file) {
+bool tx_from_json(tx_t *tx, json_node_t *saved_tx, book_t *book) {
+  json_iter_t *tx_iter = json_iter(saved_tx);
 
+  char *key;
+  json_value_t *value;
+  tx->purpose = strdup("");
+  while (!json_next(tx_iter, &key, &value)) {
+    if (!strncmp(key, "from", 4)) {
+      tx->from = value->value.string;
+    } else if (!strncmp(key, "to", 2)) {
+      tx->to = value->value.string;
+    } else if (!strncmp(key, "value", 5)) {
+      tx->amount = value->value.number;
+    } else if (!strncmp(key, "reward", 6))
+      tx->is_reward = value->value.boolean;
+    else if (!strncmp(key, "for", 3))
+      tx->purpose = value->value.string;
+    else if (!strncmp(key, "reward", 6))
+      tx->is_reward = value->value.boolean;
+  }
+  return effect_tx(book->balances, tx);
+}
+
+bool parse_block(book_t *book, FILE *blocks_file) {
   json_node_t *root = parse_json(blocks_file);
   if (!root) {
-    fprintf(stderr, "could not parse blocks.json");
+    LOG_ERROR("Failed to parse blocks.json");
     return false;
   }
   void *blocks;
@@ -180,45 +206,33 @@ bool parse_block(book_t *book, FILE *blocks_file) {
     sha256_init(&ctx);
 
     while (!json_next(block_iter, &key, &value)) {
-
       if (!strncmp(key, "parent_hash", 11)) {
-
         memcpy(block.parent_hash, value->value.string, 64);
         block.parent_hash[64] = 0;
         len += snprintf(buf + len, BUFFER_LENGTH - len,
                         "{\"parent_hash\": \"%s\",", block.parent_hash);
       } else if (!strncmp(key, "block_time", 10)) {
-
         memcpy(block.block_time, value->value.string, 20);
         block.block_time[20] = 0;
         len += snprintf(buf + len, BUFFER_LENGTH - len,
                         "\"block_time\": \"%s\",", block.block_time);
-
+        if (value_is_array && i == (no_of_blocks - 1)) {
+          struct tm tm;
+          strptime(block.block_time, "%Y-%m-%dT%H:%M:%SZ", &tm);
+          book->last_block_time = timegm(&tm);
+        }
       } else if (!strncmp(key, "txs", 3)) {
-
         array_t *txs = value->value.array;
         len += snprintf(buf + len, BUFFER_LENGTH - len, "\"txs\": [");
 
         for (uint64_t j = 0; j < txs->length; j++) {
           json_node_t *saved_tx = array_get_ptr(txs, j);
-          json_iter_t *tx_iter = json_iter(saved_tx);
 
-          char *key;
-          json_value_t *value;
           tx_t tx;
-          while (!json_next(tx_iter, &key, &value)) {
-            if (!strncmp(key, "from", 4)) {
-              tx.from = value->value.string;
-            } else if (!strncmp(key, "to", 2)) {
-              tx.to = value->value.string;
-            } else if (!strncmp(key, "value", 5)) {
-              tx.amount = value->value.number;
-            } else if (!strncmp(key, "reward", 6))
-              tx.is_reward = value->value.boolean;
-            else if (!strncmp(key, "for", 3))
-              tx.purpose = value->value.string;
-            else if (!strncmp(key, "reward", 6))
-              tx.is_reward = value->value.boolean;
+
+          if (!tx_from_json(&tx, saved_tx, book)) {
+            LOG_ERROR("Failed to process transaction from JSON");
+            return false;
           }
 
           len += snprintf(
@@ -227,7 +241,6 @@ bool parse_block(book_t *book, FILE *blocks_file) {
               "\"reward\":%s},",
               tx.from, tx.to, tx.amount, tx.purpose,
               tx.is_reward ? "true" : "false");
-          effect_tx(book->balances, &tx);
 
           if (!value_is_array) {
             tx_t *i_tx = malloc(sizeof(*i_tx));
@@ -238,7 +251,6 @@ bool parse_block(book_t *book, FILE *blocks_file) {
           saved_tx = saved_tx->next_pair;
         }
       } else if (!strncmp(key, "hash", 4)) {
-
         len--;
         len += snprintf(buf + len, BUFFER_LENGTH - len, "]}");
 
@@ -268,7 +280,7 @@ bool load_blocks(book_t *book) {
   FILE *blocks_file = fopen(BLOCKS_FILE_PATH, "r");
 
   if (!blocks_file) {
-    perror("thrift could not open blocks.json");
+    LOG_ERROR("Could not open blocks.json: %s", strerror(errno));
     return false;
   }
 
@@ -281,17 +293,16 @@ bool load_blocks(book_t *book) {
   struct stat st;
   FILE *incomplete_block_file = fopen(INCOMPLETE_BLOCK_FILE_PATH, "r+");
 
-  // if (errno) {
-  //   perror("thrift could not open incomplete_blocks.json");
-  //   return false;
-  // }
+  if (errno && errno != ENOENT) {
+    LOG_ERROR("Could not open incomplete_block.json: %s", strerror(errno));
+    return false;
+  }
 
   if (incomplete_block_file) {
     fstat(fileno(incomplete_block_file), &st);
 
     if (st.st_size > 1) {
-      if (!parse_block(book, incomplete_block_file))
-        return false;
+      if (!parse_block(book, incomplete_block_file)) return false;
       fclose(incomplete_block_file);
     }
     fclose(incomplete_block_file);
@@ -316,7 +327,6 @@ book_t *load_book() {
 }
 
 bool show_balances(book_t *book) {
-
   printf("Accounts                   Balances\n");
   printf("-----------------------------------\n");
   map_iter(book->balances);
@@ -353,89 +363,14 @@ bool add_reward(book_t *book) {
   return add_tx_xxx(book, "originator", "originator", 70, "reward", add_tx_xxx);
 }
 
-bool save_block(book_t *book) {
-  bool complete = book->block.txs->length > 8;
-
-  FILE *blocks_file;
-
-  char buffer[BUFFER_LENGTH];
-  if (complete) {
-    remove(INCOMPLETE_BLOCK_FILE_PATH);
-
-    blocks_file = fopen(BLOCKS_FILE_PATH, "r");
-
-    bool found;
-    uint64_t last_occurence = 0, k = 0;
-    while ((fgets(buffer, sizeof(buffer), blocks_file))) {
-      char *c = buffer;
-      while (*c) {
-        switch (*c) {
-        case ']':
-          found = true;
-          last_occurence = k;
-          break;
-        case ' ':
-        case '\n':
-        case '\t':
-        case '\r':
-
-          break;
-        default:
-          if (found)
-            found = false;
-        }
-        c++;
-        k++;
-        if ((int)*c == EOF) {
-
-          break;
-        }
-      }
-    }
-
-    if (!found) {
-      fprintf(stderr, "invalid json.");
-      return false;
-    }
-    printf("%llu", last_occurence);
-    fclose(blocks_file);
-
-    rename(BLOCKS_FILE_PATH, BLOCKS_TMP_FILE_PATH);
-    FILE *tx_tmp_file = fopen(BLOCKS_TMP_FILE_PATH, "r");
-    blocks_file = fopen(BLOCKS_FILE_PATH, "w");
-
-    int len;
-    while (last_occurence > 0) {
-      len = fread(buffer, 1, sizeof(buffer), tx_tmp_file);
-      if (last_occurence <= len) {
-        buffer[last_occurence] = ',';
-        last_occurence = 0;
-      } else {
-        last_occurence -= len;
-      }
-
-      fwrite(buffer, 1, len, blocks_file);
-    }
-    fclose(tx_tmp_file);
-
-    if (!blocks_file) {
-      perror("thrift could not open txs.json");
-      return false;
-    }
-  } else {
-    blocks_file = fopen(INCOMPLETE_BLOCK_FILE_PATH, "w");
-    if (!blocks_file) {
-      perror("thrift could not open " INCOMPLETE_BLOCK_FILE_PATH);
-      return false;
-    }
-  }
-
+bool hash_block(book_t *book, char *string, uint64_t *string_len, char *hash) {
   time_t now = time(NULL);
-  struct tm *tm_info = localtime(&now);
+  struct tm *tm_info = gmtime(&now);
 
   strftime(book->block.block_time, sizeof(book->block.block_time), "%FT%T",
            tm_info);
-
+  char buf[BUFFER_LENGTH];
+  char *buffer = string ? string : buf;
   uint64_t len = 0;
 
   len += snprintf(buffer + len, BUFFER_LENGTH - len,
@@ -457,25 +392,116 @@ bool save_block(book_t *book) {
   len--;
   len += snprintf(buffer + len, BUFFER_LENGTH - len, "]}");
 
-  char hash[32];
   SHA256_CTX ctx;
   sha256_init(&ctx);
   sha256_update(&ctx, (BYTE *)buffer, len);
   sha256_final(&ctx, (uint8_t *)hash);
 
+  if (string_len) *string_len = len;
+
+  return true;
+}
+bool save_block(book_t *book) {
+  bool complete = book->block.txs->length > 8;
+
+  FILE *blocks_file;
+
+  char buffer[BUFFER_LENGTH];
+  if (complete) {
+    remove(INCOMPLETE_BLOCK_FILE_PATH);
+    book->last_block_time = time(NULL);
+
+    blocks_file = fopen(BLOCKS_FILE_PATH, "r");
+
+    bool found;
+    uint64_t last_occurence = 0, k = 0;
+    while ((fgets(buffer, sizeof(buffer), blocks_file))) {
+      char *c = buffer;
+      while (*c) {
+        switch (*c) {
+          case ']':
+            found = true;
+            last_occurence = k;
+            break;
+          case ' ':
+          case '\n':
+          case '\t':
+          case '\r':
+
+            break;
+          default:
+            if (found) found = false;
+        }
+        c++;
+        k++;
+        if ((int)*c == EOF) {
+          break;
+        }
+      }
+    }
+
+    if (!found) {
+      LOG_ERROR("Invalid JSON structure in blocks file");
+      return false;
+    }
+    printf("%llu", last_occurence);
+    fclose(blocks_file);
+
+    rename(BLOCKS_FILE_PATH, BLOCKS_TMP_FILE_PATH);
+    FILE *tx_tmp_file = fopen(BLOCKS_TMP_FILE_PATH, "r");
+    blocks_file = fopen(BLOCKS_FILE_PATH, "w");
+    if (!blocks_file) {
+      LOG_ERROR("Could not open blocks.json for writing: %s", strerror(errno));
+      return false;
+    }
+
+    int len;
+    while (last_occurence > 0) {
+      len = fread(buffer, 1, sizeof(buffer), tx_tmp_file);
+      if (last_occurence <= len) {
+        buffer[last_occurence] = ',';
+        last_occurence = 0;
+      } else {
+        last_occurence -= len;
+      }
+
+      fwrite(buffer, 1, len, blocks_file);
+    }
+    fclose(tx_tmp_file);
+
+  } else {
+    blocks_file = fopen(INCOMPLETE_BLOCK_FILE_PATH, "w");
+    if (!blocks_file) {
+      perror("thrift could not open " INCOMPLETE_BLOCK_FILE_PATH);
+      return false;
+    }
+  }
+  char hash[32];
+  uint64_t len = 0;
+  if (!hash_block(book, buffer, &len, hash)) {
+    return false;
+  }
   char block_hash[65];
   hash_to_string((char *)hash, block_hash, HASH_STR_LEN);
+
   len--;
   len += snprintf(buffer + len, BUFFER_LENGTH - len, ",\"hash\":\"%s\"}%c\n",
                   block_hash, complete ? ']' : '\n');
 
   fwrite(buffer, len, 1, blocks_file);
+  fflush(blocks_file);
 
   fclose(blocks_file);
 
-  printf("New hash: %s.\n", block_hash);
-
   if (complete) {
+    tx_t *tx;
+    while (book->block.txs->length) {
+      tx = array_remove_last_ptr(book->block.txs);
+      memcpy(book->block.parent_hash, block_hash, HASH_STR_LEN);
+      free(tx);
+    }
+    printf("New block hash: %s.\n", block_hash);
+    fflush(stdout);
     remove(BLOCKS_TMP_FILE_PATH);
   }
   return true;

@@ -1,8 +1,9 @@
 #ifndef ARRAY_H
 #define ARRAY_H
 
-#include "ds.h"
 #include <stdint.h>
+
+#include "ds.h"
 
 typedef struct array {
   ds_value_t *values;

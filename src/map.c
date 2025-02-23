@@ -1,4 +1,5 @@
 #include "map.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,12 +24,12 @@ void map_append_xxx(map_t *map, void *key, union ds_val value,
     }
   }
   switch (type) {
-  case PTR_V:
-    map->pairs[map->length].value.value.ptr = value.ptr;
-    break;
-  case NUMBER_V:
-    map->pairs[map->length].value.value.number = value.number;
-    break;
+    case PTR_V:
+      map->pairs[map->length].value.value.ptr = value.ptr;
+      break;
+    case NUMBER_V:
+      map->pairs[map->length].value.value.number = value.number;
+      break;
   }
   map->pairs[map->length].key = key;
   map->pairs[map->length].value.value_type = type;

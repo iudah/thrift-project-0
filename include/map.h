@@ -1,8 +1,9 @@
 #ifndef MAP_H
 #define MAP_H
 
-#include "ds.h"
 #include <stdint.h>
+
+#include "ds.h"
 
 typedef struct map_pair {
   void *key;

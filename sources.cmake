@@ -5,4 +5,5 @@ src/json_parser.c
 src/book.c
 src/array.c
 src/map.c
+src/node.c
 )
