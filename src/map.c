@@ -3,15 +3,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zot.h>
 
-map_t *new_map() { return calloc(1, sizeof(map_t)); }
+map_t *new_map() { return zcalloc(1, sizeof(map_t)); }
 
 void map_append_xxx(map_t *map, void *key, union ds_val value,
                     ds_value_enum_t type) {
   if (map->length == map->capacity) {
     map->capacity += 8;
     if (!map->pairs) {
-      map->pairs = malloc(map->capacity * sizeof(*map->pairs));
+      map->pairs = zmalloc(map->capacity * sizeof(*map->pairs));
     } else {
       void *tmp = realloc(map->pairs, map->capacity * sizeof(*map->pairs));
 
@@ -24,12 +25,14 @@ void map_append_xxx(map_t *map, void *key, union ds_val value,
     }
   }
   switch (type) {
-    case PTR_V:
-      map->pairs[map->length].value.value.ptr = value.ptr;
-      break;
-    case NUMBER_V:
-      map->pairs[map->length].value.value.number = value.number;
-      break;
+  case PTR_V:
+    map->pairs[map->length].value.value.ptr = value.ptr;
+    break;
+  case NUMBER_V:
+    map->pairs[map->length].value.value.number = value.number;
+    break;
+  default:
+    LOG_ERROR("Unexpected Enumeration");
   }
   map->pairs[map->length].key = key;
   map->pairs[map->length].value.value_type = type;

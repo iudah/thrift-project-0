@@ -70,4 +70,8 @@ bool add_reward(book_t *book);
 
 bool save_block(book_t *book);
 
+extern char *bootstrap_path;
+
+extern char *thrift_path;
+
 #endif

@@ -8,8 +8,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <zot.h>
 
-#include "error.h"
 #include "json_parser.h"
 #include "sha256.h"
 
@@ -17,21 +17,36 @@
 #define HASH_BYTE_LEN 33
 #define BUFFER_LENGTH 4096
 
-#define GENESIS_FILE_PATH "/mnt/sdcard/Jay/thrift-project-0/db/genesis.json"
-#define BLOCKS_FILE_PATH "/mnt/sdcard/Jay/thrift-project-0/db/blocks.json"
-#define BLOCKS_TMP_FILE_PATH "/mnt/sdcard/Jay/thrift-project-0/db/~blocks.json"
-#define HASH_FILE_PATH "/mnt/sdcard/Jay/thrift-project-0/db/hash.hash"
-#define INCOMPLETE_BLOCK_FILE_PATH \
-  "/mnt/sdcard/Jay/thrift-project-0/db/incomplete_block.json"
+char GENESIS_FILE_PATH[512];
+char BLOCKS_FILE_PATH[512];
+char BLOCKS_TMP_FILE_PATH[512];
+char HASH_FILE_PATH[512];
+char INCOMPLETE_BLOCK_FILE_PATH[512];
+
+char *bootstrap_path = NULL;
+char *thrift_path = NULL;
 
 char *hash_to_string(char *hash, char *buf, int buffer_sz);
 
 bool load_genesis(book_t *book) {
+
   FILE *genesis_file = fopen(GENESIS_FILE_PATH, "r");
 
   if (!genesis_file) {
-    LOG_ERROR("Could not open genesis.json: %s", strerror(errno));
-    return false;
+    LOG("Could not open genesis.json: %s", strerror(errno));
+    genesis_file = fopen(GENESIS_FILE_PATH, "w");
+    if (!genesis_file) {
+      LOG_ERROR("Could not write '%s': %s", GENESIS_FILE_PATH, strerror(errno));
+      return false;
+    }
+
+    fwrite(
+        "{\"genesis_time\": \"2024-08-15T00:00:00.000000000Z\", \"chain_id\": "
+        "\"thrift-project-0\", \"balances\": { \"originator\": 2500000 } }",
+        1, 124, genesis_file);
+
+    fclose(genesis_file);
+    genesis_file = fopen(GENESIS_FILE_PATH, "r");
   }
 
   json_node_t *json = parse_json(genesis_file);
@@ -118,7 +133,7 @@ bool hash_txs(FILE *f, char *hash) {
   fwrite(hash, HASH_STR_LEN, 1, hash_file);
   fclose(hash_file);
 
-  free(bytes);
+  zfree(bytes);
 
   return true;
 }
@@ -280,8 +295,8 @@ bool load_blocks(book_t *book) {
   FILE *blocks_file = fopen(BLOCKS_FILE_PATH, "r");
 
   if (!blocks_file) {
-    LOG_ERROR("Could not open blocks.json: %s", strerror(errno));
-    return false;
+    LOG("Could not open blocks.json: %s", strerror(errno));
+    return true;
   }
 
   if (!parse_block(book, blocks_file)) {
@@ -302,7 +317,8 @@ bool load_blocks(book_t *book) {
     fstat(fileno(incomplete_block_file), &st);
 
     if (st.st_size > 1) {
-      if (!parse_block(book, incomplete_block_file)) return false;
+      if (!parse_block(book, incomplete_block_file))
+        return false;
       fclose(incomplete_block_file);
     }
     fclose(incomplete_block_file);
@@ -311,6 +327,40 @@ bool load_blocks(book_t *book) {
 }
 
 book_t *load_book() {
+  if (thrift_path == NULL) {
+    char *HOME = getenv("HOME");
+    thrift_path = strdup(HOME);
+  }
+
+  char path[512];
+  memcpy(path, thrift_path, strlen(thrift_path) + 1);
+
+  struct stat st = {0};
+
+  char *paths[] = {"/.thrift", "/db"};
+
+  for (int i = 0; i < 2; i++) {
+    strncat(path, paths[i], strlen(paths[i]) + 1);
+
+    if (stat(path, &st) < 0) {
+      if (mkdir(path, 07777) < 0) {
+        LOG_ERROR("Could not make directory '%s': %s", path, strerror(errno));
+        return NULL;
+      }
+    }
+  }
+
+  snprintf(GENESIS_FILE_PATH, sizeof(GENESIS_FILE_PATH),
+           "%s/.thrift/db/genesis.json", thrift_path);
+  snprintf(BLOCKS_FILE_PATH, sizeof(BLOCKS_FILE_PATH),
+           "%s/.thrift/db/blocks.json", thrift_path);
+  snprintf(HASH_FILE_PATH, sizeof(HASH_FILE_PATH), "%s/.thrift/db/hash.hash",
+           thrift_path);
+  snprintf(BLOCKS_TMP_FILE_PATH, sizeof(BLOCKS_TMP_FILE_PATH),
+           "%s/.thrift/db/~blocks.json", thrift_path);
+  snprintf(INCOMPLETE_BLOCK_FILE_PATH, sizeof(INCOMPLETE_BLOCK_FILE_PATH),
+           "%s/.thrift/db/incomplete_block.json", thrift_path);
+
   book_t *book = calloc(1, sizeof(*book));
   book->balances = new_map();
   book->block.txs = new_array();
@@ -397,7 +447,8 @@ bool hash_block(book_t *book, char *string, uint64_t *string_len, char *hash) {
   sha256_update(&ctx, (BYTE *)buffer, len);
   sha256_final(&ctx, (uint8_t *)hash);
 
-  if (string_len) *string_len = len;
+  if (string_len)
+    *string_len = len;
 
   return true;
 }
@@ -419,18 +470,19 @@ bool save_block(book_t *book) {
       char *c = buffer;
       while (*c) {
         switch (*c) {
-          case ']':
-            found = true;
-            last_occurence = k;
-            break;
-          case ' ':
-          case '\n':
-          case '\t':
-          case '\r':
+        case ']':
+          found = true;
+          last_occurence = k;
+          break;
+        case ' ':
+        case '\n':
+        case '\t':
+        case '\r':
 
-            break;
-          default:
-            if (found) found = false;
+          break;
+        default:
+          if (found)
+            found = false;
         }
         c++;
         k++;
@@ -472,7 +524,7 @@ bool save_block(book_t *book) {
   } else {
     blocks_file = fopen(INCOMPLETE_BLOCK_FILE_PATH, "w");
     if (!blocks_file) {
-      perror("thrift could not open " INCOMPLETE_BLOCK_FILE_PATH);
+      LOG_ERROR("thrift could not open %s", INCOMPLETE_BLOCK_FILE_PATH);
       return false;
     }
   }
@@ -498,7 +550,7 @@ bool save_block(book_t *book) {
     while (book->block.txs->length) {
       tx = array_remove_last_ptr(book->block.txs);
       memcpy(book->block.parent_hash, block_hash, HASH_STR_LEN);
-      free(tx);
+      zfree(tx);
     }
     printf("New block hash: %s.\n", block_hash);
     fflush(stdout);

@@ -1,17 +1,21 @@
 #include "array.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zot.h>
 
 #include "ds.h"
-#include "error.h"
 
-array_t *new_array() { return calloc(1, sizeof(array_t)); }
+extern int errno;
+
+array_t *new_array() { return zcalloc(1, sizeof(array_t)); }
 
 void destroy_array(array_t *array) {
-  if (array->capacity > 0) free(array->values);
-  free(array);
+  if (array->capacity > 0)
+    zfree(array->values);
+  zfree(array);
 }
 
 void array_append_xxx(array_t *array, union ds_val value,
@@ -30,21 +34,21 @@ void array_append_xxx(array_t *array, union ds_val value,
   }
 
   switch (type) {
-    case PTR_V:
-      array->values[array->length].value.ptr = value.ptr;
-      break;
-    case INT_V:
-      array->values[array->length].value.d = value.d;
-      break;
-    case NUMBER_V:
-      array->values[array->length].value.number = value.number;
-      break;
-    case BOOLEAN_V:
-      array->values[array->length].value.boolean = value.boolean;
-      break;
-    default:
-      LOG_ERROR("Invalid value type: %d", type);
-      abort();
+  case PTR_V:
+    array->values[array->length].value.ptr = value.ptr;
+    break;
+  case INT_V:
+    array->values[array->length].value.d = value.d;
+    break;
+  case NUMBER_V:
+    array->values[array->length].value.number = value.number;
+    break;
+  case BOOLEAN_V:
+    array->values[array->length].value.boolean = value.boolean;
+    break;
+  default:
+    LOG_ERROR("Invalid value type: %d", type);
+    abort();
   }
 
   array->values[array->length].value_type = type;
@@ -73,7 +77,7 @@ void array_append_int(array_t *array, int value) {
 
 int array_get_int(array_t *array, int idx) {
   if (idx < 0 || idx >= array->length) {
-    LOG_ERROR("Index %d out of bounds (size: %zu)", idx, array->length);
+    LOG_ERROR("Index %d out of bounds (size: %" PRIu64 ")", idx, array->length);
     return 0;
   }
   ds_value_t value = array->values[idx];
@@ -82,7 +86,7 @@ int array_get_int(array_t *array, int idx) {
 
 void *array_get_ptr(array_t *array, int idx) {
   if (idx < 0 || idx >= array->length) {
-    LOG_ERROR("Index %d out of bounds (size: %zu)", idx, array->length);
+    LOG_ERROR("Index %d out of bounds (size: %" PRIu64 ")", idx, array->length);
     return NULL;
   }
   ds_value_t value = array->values[idx];
