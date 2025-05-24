@@ -24,7 +24,6 @@ find_package(memalloc QUIET)
 if(NOT memalloc_FOUND)
     ExternalProject_Add(
         MemAlloc
-        SOURCE_DIR /sdcard/Jay/Projects/xab_laud_ubject/memalloc
         GIT_REPOSITORY https://github.com/iudah/memalloc.git
         GIT_SHALLOW TRUE
         INSTALL_DIR ${CMAKE_BINARY_DIR}/memalloc
@@ -37,7 +36,6 @@ find_package(zot QUIET)
 if(NOT zot_FOUND)
     ExternalProject_Add(
         Zot
-        SOURCE_DIR /sdcard/Jay/Projects/xab_laud_ubject/zot
         GIT_REPOSITORY https://github.com/iudah/zot.git
         GIT_SHALLOW TRUE
         INSTALL_DIR ${CMAKE_BINARY_DIR}/zot
