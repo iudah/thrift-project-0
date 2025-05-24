@@ -25,6 +25,8 @@ if(NOT memalloc_FOUND)
     ExternalProject_Add(
         MemAlloc
         SOURCE_DIR /sdcard/Jay/Projects/xab_laud_ubject/memalloc
+        GIT_REPOSITORY https://github.com/iudah/memalloc.git
+        GIT_SHALLOW TRUE
         INSTALL_DIR ${CMAKE_BINARY_DIR}/memalloc
         CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
         STAMP_DIR ${CMAKE_BINARY_DIR}/stamps
@@ -36,6 +38,8 @@ if(NOT zot_FOUND)
     ExternalProject_Add(
         Zot
         SOURCE_DIR /sdcard/Jay/Projects/xab_laud_ubject/zot
+        GIT_REPOSITORY https://github.com/iudah/zot.git
+        GIT_SHALLOW TRUE
         INSTALL_DIR ${CMAKE_BINARY_DIR}/zot
         CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR> -DCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}
         STAMP_DIR ${CMAKE_BINARY_DIR}/stamps
