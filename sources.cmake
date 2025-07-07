@@ -5,4 +5,7 @@ set(SOURCE_FILES
     src/node_net.c
     src/router.c
     src/http_handlers.c
+    src/wallet.c
+    src/blake3.c
+    src/base58.c
 )
