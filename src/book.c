@@ -10,7 +10,8 @@
 #include <time.h>
 #include <zot.h>
 
-#include "json_parser.h"
+#include "ds.h"
+#include "ison.h"
 #include "sha256.h"
 
 #define HASH_STR_LEN 65
@@ -28,6 +29,9 @@ char *thrift_path = NULL;
 
 char *hash_to_string(char *hash, char *buf, int buffer_sz);
 
+static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
+                       char *purpose, void *xxx);
+
 bool load_genesis(book_t *book) {
 
   FILE *genesis_file = fopen(GENESIS_FILE_PATH, "r");
@@ -40,254 +44,70 @@ bool load_genesis(book_t *book) {
       return false;
     }
 
-    fwrite(
-        "{\"genesis_time\": \"2024-08-15T00:00:00.000000000Z\", \"chain_id\": "
-        "\"thrift-project-0\", \"balances\": { \"originator\": 2500000 } }",
-        1, 124, genesis_file);
+    const char *genesis_json =
+        "{"
+        "  \"genesis_time\": \"2024-08-15T00:00:00.000000000Z\", "
+        "  \"chain_id\": \"thrift-project-0\", "
+        "  \"balances\": ["
+        "    { \"name\": \"originator\", \"credit\": 2500000 }"
+        "  ]"
+        "}";
+    fwrite(genesis_json, 1, strlen(genesis_json), genesis_file);
 
     fclose(genesis_file);
     genesis_file = fopen(GENESIS_FILE_PATH, "r");
   }
 
-  json_node_t *json = parse_json(genesis_file);
+  json_value *json = json_parse_file(genesis_file);
 
   fclose(genesis_file);
 
-  json_value_t *root_value = json_get_value(json, NULL);
-  json_value_t *balance_value =
-      json_get_value(root_value->value.node, "balances");
-  json_node_t *balances = balance_value->value.node;
+  if (json_value_type(json) != DICT)
+    return false;
 
-  char *key;
-  json_value_t *value;
-  json_iter_t *balances_iter_state = json_iter(balances);
-  while (!json_next(balances_iter_state, &key, &value)) {
-    map_pair_t *map = map_get(book->balances, key, (void *)strcmp);
-    if (!map)
-      map_append_number(book->balances, key, value->value.number);
-    else
-      map->value.value.number += value->value.number;
-  }
+  json_value *balances = json_query(json, "balances");
 
-  return true;
-}
+  if (json_value_type(balances) != LIST)
+    return false;
 
-bool effect_tx(map_t *balances, tx_t *tx) {
-  if (tx->is_reward) {
-    map_pair_t *originator_pair =
-        map_get(balances, "originator", (void *)strcmp);
-    if (!originator_pair) {
-      LOG_ERROR("Originator account missing in reward transaction");
+  array_t *balance_list = json_value_data(balances).ptr;
+
+  json_value *bal_detail;
+  char *name;
+  double credit;
+
+  uint32_t n_balances = array_length(balance_list);
+  for (uint32_t i = 0; i < n_balances; i++) {
+    bal_detail = array_get(balance_list, i);
+
+    json_value *name_query = json_query(bal_detail, "name");
+    if (json_value_type(name_query) != TEXT) {
       return false;
     }
-    originator_pair->value.value.number += tx->amount;
-    return true;
-  }
 
-  map_pair_t *sender = map_get(balances, tx->from, (void *)strcmp);
-  if (!sender) {
-    LOG_ERROR("Sender account '%s' not found", tx->from);
-    return false;
-  }
+    name = json_value_data(name_query).string;
 
-  volatile double net = tx->amount + tx->amount * 1e-6;
-  if (sender->value.value.number < net) {
-    LOG_ERROR("Insufficient funds for %s: %.2f < required %.2f", tx->from,
-              sender->value.value.number, net);
-    return false;
-  }
+    json_value *credit_query = json_query(bal_detail, "credit");
+    if (json_value_type(credit_query) != FLOATS) {
+      return false;
+    }
 
-  sender->value.value.number -= net;
-  map_get(balances, "originator", (void *)strcmp)->value.value.number +=
-      tx->amount * 1e-6;
+    credit = json_value_data(credit_query).number;
 
-  map_pair_t *receiver = map_get(balances, tx->to, (void *)strcmp);
-  if (!receiver)
-    map_append_number(balances, tx->to, tx->amount);
-  else
-    receiver->value.value.number += tx->amount;
+    map_value *book_bal = hash_map_get(book->balances, name);
 
-  return true;
-}
-
-bool hash_txs(FILE *f, char *hash) {
-  fseek(f, 0, SEEK_SET);
-
-  struct stat st;
-  fstat(fileno(f), &st);
-
-  unsigned char *bytes = calloc(1, st.st_size);
-
-  fread(bytes, 1, st.st_size, f);
-
-  SHA256_CTX ctx;
-
-  sha256_init(&ctx);
-  char buf[256];
-
-  sha256_update(&ctx, bytes, st.st_size);
-
-  sha256_final(&ctx, (uint8_t *)hash);
-
-  FILE *hash_file = fopen(HASH_FILE_PATH, "w");
-  fwrite(hash, HASH_STR_LEN, 1, hash_file);
-  fclose(hash_file);
-
-  zfree(bytes);
-
-  return true;
-}
-
-char *hash_to_string(char *hash, char *buf, int buffer_sz) {
-  snprintf(buf, buffer_sz,
-           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
-           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
-           "%02x%02x%02x%02x%02x%02x",
-           hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6],
-           hash[7], hash[8], hash[9], hash[10], hash[11], hash[12], hash[13],
-           hash[14], hash[15], hash[16], hash[17], hash[18], hash[19], hash[20],
-           hash[21], hash[22], hash[23], hash[24], hash[25], hash[26], hash[27],
-           hash[28], hash[29], hash[30], hash[31]);
-
-  return buf;
-}
-
-bool verify_hash(book_t *book, FILE *tx_file) {
-  char hash[HASH_BYTE_LEN];
-  hash_txs(tx_file, hash);
-
-  if (!strncmp(hash, book->block.parent_hash, 32)) {
-    return true;
-  }
-
-  char expected_hash[HASH_STR_LEN], actual_hash[HASH_STR_LEN];
-  LOG_ERROR("Hash verification failed\nExpected: %s\nActual:   %s",
-            hash_to_string(hash, expected_hash, HASH_STR_LEN),
-            hash_to_string(book->block.parent_hash, actual_hash, HASH_STR_LEN));
-  return false;
-}
-
-bool tx_from_json(tx_t *tx, json_node_t *saved_tx, book_t *book) {
-  json_iter_t *tx_iter = json_iter(saved_tx);
-
-  char *key;
-  json_value_t *value;
-  tx->purpose = strdup("");
-  while (!json_next(tx_iter, &key, &value)) {
-    if (!strncmp(key, "from", 4)) {
-      tx->from = value->value.string;
-    } else if (!strncmp(key, "to", 2)) {
-      tx->to = value->value.string;
-    } else if (!strncmp(key, "value", 5)) {
-      tx->amount = value->value.number;
-    } else if (!strncmp(key, "reward", 6))
-      tx->is_reward = value->value.boolean;
-    else if (!strncmp(key, "for", 3))
-      tx->purpose = value->value.string;
-    else if (!strncmp(key, "reward", 6))
-      tx->is_reward = value->value.boolean;
-  }
-  return effect_tx(book->balances, tx);
-}
-
-bool parse_block(book_t *book, FILE *blocks_file) {
-  json_node_t *root = parse_json(blocks_file);
-  if (!root) {
-    LOG_ERROR("Failed to parse blocks.json");
-    return false;
-  }
-  void *blocks;
-  uint64_t no_of_blocks = 1;
-  bool value_is_array = root->value.value_type == ARRAY;
-  if (value_is_array) {
-    blocks = root->value.value.array;
-    no_of_blocks = ((array_t *)blocks)->length;
-  } else
-    blocks = root->value.value.node;
-
-  for (uint64_t i = 0; i < no_of_blocks; i++) {
-    json_node_t *saved_block =
-        value_is_array ? array_get_ptr(blocks, i) : blocks;
-    json_iter_t *block_iter = json_iter(saved_block);
-
-    char buf[4096];
-    uint64_t len = 0;
-
-    char *key;
-    json_value_t *value;
-    block_t block;
-
-    SHA256_CTX ctx;
-    sha256_init(&ctx);
-
-    while (!json_next(block_iter, &key, &value)) {
-      if (!strncmp(key, "parent_hash", 11)) {
-        memcpy(block.parent_hash, value->value.string, 64);
-        block.parent_hash[64] = 0;
-        len += snprintf(buf + len, BUFFER_LENGTH - len,
-                        "{\"parent_hash\": \"%s\",", block.parent_hash);
-      } else if (!strncmp(key, "block_time", 10)) {
-        memcpy(block.block_time, value->value.string, 20);
-        block.block_time[20] = 0;
-        len += snprintf(buf + len, BUFFER_LENGTH - len,
-                        "\"block_time\": \"%s\",", block.block_time);
-        if (value_is_array && i == (no_of_blocks - 1)) {
-          struct tm tm;
-          strptime(block.block_time, "%Y-%m-%dT%H:%M:%SZ", &tm);
-          book->last_block_time = timegm(&tm);
-        }
-      } else if (!strncmp(key, "txs", 3)) {
-        array_t *txs = value->value.array;
-        len += snprintf(buf + len, BUFFER_LENGTH - len, "\"txs\": [");
-
-        for (uint64_t j = 0; j < txs->length; j++) {
-          json_node_t *saved_tx = array_get_ptr(txs, j);
-
-          tx_t tx;
-
-          if (!tx_from_json(&tx, saved_tx, book)) {
-            LOG_ERROR("Failed to process transaction from JSON");
-            return false;
-          }
-
-          len += snprintf(
-              buf + len, BUFFER_LENGTH - len,
-              "{\"from\":\"%s\",\"to\":\"%s\",\"value\":%f,\"for\":\"%s\","
-              "\"reward\":%s},",
-              tx.from, tx.to, tx.amount, tx.purpose,
-              tx.is_reward ? "true" : "false");
-
-          if (!value_is_array) {
-            tx_t *i_tx = malloc(sizeof(*i_tx));
-            memcpy(i_tx, &tx, sizeof(*i_tx));
-            array_append_ptr(book->block.txs, i_tx);
-          }
-
-          saved_tx = saved_tx->next_pair;
-        }
-      } else if (!strncmp(key, "hash", 4)) {
-        len--;
-        len += snprintf(buf + len, BUFFER_LENGTH - len, "]}");
-
-        char hash[32];
-        sha256_update(&ctx, (BYTE *)buf, len);
-        sha256_final(&ctx, (uint8_t *)hash);
-
-        snprintf(buf, sizeof(buf), "%s",
-                 hash_to_string(hash, (char[HASH_STR_LEN]){}, HASH_STR_LEN));
-
-        if (strncmp(buf, value->value.string, HASH_BYTE_LEN)) {
-          printf("Error: Invalid block. Expected %s got %s\n", buf,
-                 value->value.string);
-          return false;
-        }
-        if (value_is_array) {
-          memcpy(book->block.parent_hash, value->value.string, 64);
-          book->block.parent_hash[64] = 0;
-        }
+    if (book_bal) {
+      if (json_value_type(book_bal) != FLOATS) {
+        return false;
       }
+      credit += json_value_data(credit_query).number;
+      hash_map_replace_number(book->balances, name, credit);
+    } else {
+      array_append_str(book->users, name);
+      hash_map_add_number(book->balances, name, credit);
     }
   }
+
   return true;
 }
 
@@ -297,6 +117,8 @@ bool load_blocks(book_t *book) {
   if (!blocks_file) {
     LOG("Could not open blocks.json: %s", strerror(errno));
     return true;
+  } else {
+    LOG("Opened blocks.json");
   }
 
   if (!parse_block(book, blocks_file)) {
@@ -329,7 +151,7 @@ bool load_blocks(book_t *book) {
 book_t *load_book() {
   if (thrift_path == NULL) {
     char *HOME = getenv("HOME");
-    thrift_path = strdup(HOME);
+    thrift_path = zstrdup(HOME);
   }
 
   char path[512];
@@ -361,9 +183,10 @@ book_t *load_book() {
   snprintf(INCOMPLETE_BLOCK_FILE_PATH, sizeof(INCOMPLETE_BLOCK_FILE_PATH),
            "%s/.thrift/db/incomplete_block.json", thrift_path);
 
-  book_t *book = calloc(1, sizeof(*book));
-  book->balances = new_map();
-  book->block.txs = new_array();
+  book_t *book = zcalloc(1, sizeof(*book));
+  book->balances = create_hash_map();
+  book->users = create_array();
+  book->block.txs = create_array();
 
   if (!load_genesis(book)) {
     return NULL;
@@ -376,41 +199,160 @@ book_t *load_book() {
   return book;
 }
 
-bool show_balances(book_t *book) {
-  printf("Accounts                   Balances\n");
-  printf("-----------------------------------\n");
-  map_iter(book->balances);
-  char *account;
-  ds_value_t *bal;
-  while (!map_next((void **)&account, &bal)) {
-    printf("%-18s %18f\n", account, bal->value.number);
-  }
-
-  printf("Tx Hash: %s.\n", book->block.parent_hash);
-  return true;
-}
-
-static char *empty_str = "";
-static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
-                       char *purpose, void *xxx) {
-  tx_t tx_ = {from, to, purpose ? purpose : empty_str, amount,
-              xxx == add_tx_xxx};
-  tx_t *tx = malloc(sizeof(*tx));
-  memcpy(tx, &tx_, sizeof(tx_));
-
-  array_append_ptr(book->block.txs, tx);
-  if (!effect_tx(book->balances, tx)) {
+bool parse_block(book_t *book, FILE *blocks_file) {
+  json_value *json = json_parse_file(blocks_file);
+  if (!json) {
+    LOG_ERROR("Failed to parse blocks.json");
     return false;
   }
+
+  bool is_single_block = json_value_type(json) == DICT;
+
+  if (json_value_type(json) != LIST && !is_single_block) {
+    return false;
+  }
+  array_t *blocks = json_value_data(json).ptr;
+  uint64_t no_of_blocks = is_single_block ? 1 : array_length(blocks);
+
+  for (uint64_t i = 0; i < no_of_blocks; i++) {
+    json_value *block_json = is_single_block ? json : array_get(blocks, i);
+
+    if (json_value_type(block_json) != DICT) {
+      return false;
+    }
+
+    char buf[4096];
+
+    uint32_t len = 0;
+    block_t block;
+    json_value *q = json_query(block_json, "parent_hash");
+    if (json_value_type(q) != TEXT) {
+      return false;
+    }
+    memcpy(block.parent_hash, json_value_data(q).string, 64);
+    block.parent_hash[64] = 0;
+    len += snprintf(buf + len, BUFFER_LENGTH - len, "{\"parent_hash\": \"%s\",",
+                    block.parent_hash);
+
+    q = json_query(block_json, "block_time");
+    if (json_value_type(q) != TEXT) {
+      return false;
+    }
+    memcpy(block.block_time, json_value_data(q).string, 20);
+    block.block_time[20] = 0;
+    len += snprintf(buf + len, BUFFER_LENGTH - len, "\"block_time\": \"%s\",",
+                    block.block_time);
+
+    // set time last block was added
+    if (i == (no_of_blocks - 1)) {
+      struct tm tm;
+      strptime(block.block_time, "%Y-%m-%dT%H:%M:%SZ", &tm);
+      book->last_block_time = timegm(&tm);
+    }
+
+    q = json_query(block_json, "block_index");
+    if (json_value_type(q) != FLOATS) {
+      return false;
+    }
+    block.block_idx = (int)json_value_data(q).number;
+    len += snprintf(buf + len, BUFFER_LENGTH - len, "\"block_index\": %i,",
+                    block.block_idx);
+
+    q = json_query(block_json, "txs");
+    if (json_value_type(q) != LIST) {
+      return false;
+    }
+    array_t *txs = json_value_data(q).ptr;
+    len += snprintf(buf + len, BUFFER_LENGTH - len, "\"txs\": [");
+    for (uint64_t j = 0; j < array_length(txs); j++) {
+      json_value *saved_tx = array_get(txs, j);
+
+      tx_t tx;
+
+      if (!tx_from_json(&tx, saved_tx, book)) {
+        LOG_ERROR("Failed to process transaction from JSON");
+        return false;
+      }
+
+      len +=
+          snprintf(buf + len, BUFFER_LENGTH - len,
+                   "{\"from\":\"%s\",\"to\":\"%s\",\"value\":%f,\"for\":\"%s\","
+                   "\"reward\":%s},",
+                   tx.from, tx.to, tx.amount, tx.purpose,
+                   tx.is_reward ? "true" : "false");
+    }
+
+    q = json_query(block_json, "hash");
+    if (json_value_type(q) != TEXT) {
+      return false;
+    }
+    char *stored_hash = json_value_data(q).string;
+
+    len--;
+    len += snprintf(buf + len, BUFFER_LENGTH - len, "]}");
+
+    if (!is_single_block) {
+      SHA256_CTX ctx;
+      sha256_init(&ctx);
+      char hash[32];
+      sha256_update(&ctx, (BYTE *)buf, len);
+      sha256_final(&ctx, (uint8_t *)hash);
+      snprintf(buf, sizeof(buf), "%s",
+               hash_to_string(hash, (char[HASH_STR_LEN]){}, HASH_STR_LEN));
+
+      if (strncmp(buf, stored_hash, HASH_BYTE_LEN)) {
+        printf("Error: Invalid block. Expected %s got %s\n", buf, stored_hash);
+        return false;
+      }
+      memcpy(book->block.parent_hash, stored_hash, 64);
+      book->block.parent_hash[64] = 0;
+    }
+  }
+
   return true;
 }
 
-bool add_tx(book_t *book, char *from, char *to, double amount, char *purpose) {
-  return add_tx_xxx(book, from, to, amount, purpose, NULL);
+bool verify_hash(book_t *book, FILE *tx_file) {
+  char hash[HASH_BYTE_LEN];
+  hash_txs(tx_file, hash);
+
+  if (!strncmp(hash, book->block.parent_hash, 32)) {
+    return true;
+  }
+
+  char expected_hash[HASH_STR_LEN], actual_hash[HASH_STR_LEN];
+  LOG_ERROR("Hash verification failed\nExpected: %s\nActual:   %s",
+            hash_to_string(hash, expected_hash, HASH_STR_LEN),
+            hash_to_string(book->block.parent_hash, actual_hash, HASH_STR_LEN));
+  return false;
 }
 
-bool add_reward(book_t *book) {
-  return add_tx_xxx(book, "originator", "originator", 70, "reward", add_tx_xxx);
+bool hash_txs(FILE *f, char *hash) {
+  fseek(f, 0, SEEK_SET);
+
+  struct stat st;
+  fstat(fileno(f), &st);
+
+  unsigned char *bytes = zcalloc(1, st.st_size);
+
+  fread(bytes, 1, st.st_size, f);
+
+  SHA256_CTX ctx;
+
+  sha256_init(&ctx);
+  char buf[256];
+
+  sha256_update(&ctx, bytes, st.st_size);
+
+  sha256_final(&ctx, (uint8_t *)hash);
+
+  FILE *hash_file = fopen(HASH_FILE_PATH, "w");
+  fwrite(hash, HASH_STR_LEN, 1, hash_file);
+  fclose(hash_file);
+
+  zfree(bytes);
+
+  return true;
 }
 
 bool hash_block(book_t *book, char *string, uint64_t *string_len, char *hash) {
@@ -426,9 +368,14 @@ bool hash_block(book_t *book, char *string, uint64_t *string_len, char *hash) {
   len += snprintf(buffer + len, BUFFER_LENGTH - len,
                   "{\"parent_hash\": \"%s\","
                   "\"block_time\": \"%sZ\","
+                  "\"block_index\": %i,"
                   "\"txs\": [",
-                  book->block.parent_hash, book->block.block_time);
-  for (uint64_t i = 0; i < book->block.txs->length; i++) {
+                  book->block.parent_hash, book->block.block_time,
+                  book->block.block_idx);
+
+  uint32_t n_tx = array_length(book->block.txs);
+
+  for (uint64_t i = 0; i < n_tx; i++) {
     tx_t *tx = array_get_ptr(book->block.txs, i);
 
     len +=
@@ -452,8 +399,132 @@ bool hash_block(book_t *book, char *string, uint64_t *string_len, char *hash) {
 
   return true;
 }
+
+bool tx_from_json(tx_t *tx, json_value *saved_tx, book_t *book) {
+
+  if (json_value_type(saved_tx) != DICT) {
+    return false;
+  }
+
+  json_value *q;
+
+  q = json_query(saved_tx, "value");
+  tx->amount = json_value_data(q).number;
+
+  q = json_query(saved_tx, "from");
+  tx->from = json_value_data(q).string;
+
+  q = json_query(saved_tx, "to");
+  tx->to = json_value_data(q).string;
+
+  q = json_query(saved_tx, "reward");
+  tx->is_reward = q != NULL && json_value_data(q).boolean;
+
+  q = json_query(saved_tx, "for");
+  tx->purpose = q ? json_value_data(q).string : NULL;
+  if (!tx->purpose) {
+    tx->purpose = zstrdup("");
+  }
+
+  return effect_tx(book->balances, book->users, tx);
+}
+
+bool effect_tx(hash_map *balances, array_t *users, tx_t *tx) {
+
+  if (tx->is_reward) {
+    map_value *originator_pair = hash_map_get(balances, "originator");
+    if (!originator_pair) {
+      LOG_ERROR("Originator account missing in reward transaction");
+      return false;
+    }
+    if (json_value_type(originator_pair) != FLOATS) {
+      return false;
+    }
+    double credit = json_value_data(originator_pair).number;
+    credit += tx->amount;
+    hash_map_replace_number(balances, "originator", credit);
+    return true;
+  }
+
+  map_value *sender = hash_map_get(balances, tx->from);
+  if (!sender) {
+    LOG_ERROR("Sender account '%s' not found", tx->from);
+    return false;
+  }
+  if (json_value_type(sender) != FLOATS) {
+    return false;
+  }
+
+  volatile double net = tx->amount + tx->amount * 1e-6;
+  double s_balance = json_value_data(sender).number;
+  if (s_balance < net) {
+    LOG_ERROR("Insufficient funds for %s: %.2f < required %.2f", tx->from,
+              s_balance, net);
+    return false;
+  }
+
+  s_balance -= net;
+  hash_map_replace_number(balances, tx->from, s_balance);
+
+  map_value *originator = hash_map_get(balances, "originator");
+  double fee = json_value_data(originator).number + tx->amount * 1e-6;
+
+  map_value *receiver = hash_map_get(balances, tx->to);
+  if (receiver) {
+    if (json_value_type(receiver) != FLOATS) {
+      return false;
+    }
+    double r_balance = json_value_data(receiver).number + tx->amount;
+    hash_map_replace_number(balances, tx->to, r_balance);
+  } else {
+    array_append_str(users, tx->to);
+    hash_map_add_number(balances, tx->to, tx->amount);
+  }
+
+  return true;
+}
+
+bool add_tx(book_t *book, char *from, char *to, double amount, char *purpose) {
+  return add_tx_xxx(book, from, to, amount, purpose, NULL);
+}
+
+static char *empty_str = "";
+static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
+                       char *purpose, void *xxx) {
+  tx_t tx_ = {from, to, purpose ? purpose : empty_str, amount,
+              xxx == add_tx_xxx};
+  tx_t *tx = zmalloc(sizeof(*tx));
+  memcpy(tx, &tx_, sizeof(tx_));
+
+  array_append_ptr(book->block.txs, tx);
+  if (!effect_tx(book->balances, book->users, tx)) {
+    return false;
+  }
+  return true;
+}
+
+bool show_balances(book_t *book) {
+  printf("Accounts                   Balances\n");
+  printf("-----------------------------------\n");
+
+  uint32_t n_user = array_length(book->users);
+  for (uint32_t i = 0; i < n_user; i++) {
+    char *account = array_get_ptr(book->users, i);
+    map_value *q = hash_map_get(book->balances, account);
+    printf("%-18s %18f\n", account, json_value_data(q).number);
+  }
+
+  printf("Tx Hash: %s.\n", book->block.parent_hash);
+  return true;
+}
+
+bool add_reward(book_t *book) {
+  return add_tx_xxx(book, "originator", "originator", 70, "reward", add_tx_xxx);
+}
+
 bool save_block(book_t *book) {
-  bool complete = book->block.txs->length > 8;
+  uint32_t n_tx = array_length(book->block.txs);
+  bool complete = n_tx > 8;
 
   FILE *blocks_file;
 
@@ -547,14 +618,30 @@ bool save_block(book_t *book) {
 
   if (complete) {
     tx_t *tx;
-    while (book->block.txs->length) {
+    uint32_t n_tx = array_length(book->block.txs);
+    while (n_tx) {
       tx = array_remove_last_ptr(book->block.txs);
       memcpy(book->block.parent_hash, block_hash, HASH_STR_LEN);
       zfree(tx);
+      n_tx--;
     }
     printf("New block hash: %s.\n", block_hash);
     fflush(stdout);
     remove(BLOCKS_TMP_FILE_PATH);
   }
   return true;
+}
+
+char *hash_to_string(char *hash, char *buf, int buffer_sz) {
+  snprintf(buf, buffer_sz,
+           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
+           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
+           "%02x%02x%02x%02x%02x%02x",
+           hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6],
+           hash[7], hash[8], hash[9], hash[10], hash[11], hash[12], hash[13],
+           hash[14], hash[15], hash[16], hash[17], hash[18], hash[19], hash[20],
+           hash[21], hash[22], hash[23], hash[24], hash[25], hash[26], hash[27],
+           hash[28], hash[29], hash[30], hash[31]);
+
+  return buf;
 }

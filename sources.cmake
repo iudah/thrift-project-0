@@ -1,9 +1,8 @@
-set(SOURCE_FILES 
-src/main.c
-src/sha256.c
-src/json_parser.c
-src/book.c
-src/array.c
-src/map.c
-src/node.c
+set(SOURCE_FILES
+    src/main.c
+    src/sha256.c
+    src/book.c
+    src/node_net.c
+    src/router.c
+    src/http_handlers.c
 )

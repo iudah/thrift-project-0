@@ -10,7 +10,7 @@
 int getsubopt(char **optionp, char *const *keylistp, char **valuep);
 
 #include "book.h"
-#include "node.h"
+#include "node_net.h"
 
 enum { ADD_TX, SHOW_BALS, START_NODE } action;
 enum { FROM = 0, TO, AMOUNT, NOTE, ADDRESS, PORT, THRIFT };
@@ -37,7 +37,7 @@ bool set_path(char *pathname, char **path, char *usr_path) {
         usr_path);
     return false;
   }
-  *path = strdup(usr_path);
+  *path = zstrdup(usr_path);
   return path_set_only = true;
 }
 
