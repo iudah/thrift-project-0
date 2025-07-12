@@ -48,12 +48,17 @@ typedef struct book {
  * about the transaction purpose and reward status.
  */
 typedef struct {
+  uint8_t *public_key;
   char *from;     /**< Sending account name */
   char *to;       /**< Receiving account name */
   char *purpose;  /**< Description of transaction purpose */
   double amount;  /**< Transfer amount in native currency */
   bool is_reward; /**< Flag indicating system-generated reward transaction */
+  uint8_t signature[65];
+  uint64_t nonce;
 } tx_t;
+
+typedef struct keystore keystore;
 
 bool show_balances(book_t *book);
 bool load_genesis(book_t *book);
@@ -85,5 +90,17 @@ char *hash_to_string(char *hash, char *buf, int buffer_sz);
 extern char *bootstrap_path;
 
 extern char *thrift_path;
+
+extern keystore *user_keystore;
+
+keystore *load_keystore(char *password);
+bool sign_tx(tx_t *tx, keystore *ks);
+bool is_valid_tx(tx_t *tx);
+bool sign_buffer(uint8_t signature[65], char *buffer, uint64_t buffer_len,
+                 keystore *ks);
+bool verify_buffer(uint8_t signature[65], char *buffer, uint64_t buffer_length,
+                   uint8_t *public_key);
+char *get_address_from_keystore();
+void get_password(char *password, int max_length);
 
 #endif

@@ -28,6 +28,7 @@ char *bootstrap_path = NULL;
 char *thrift_path = NULL;
 
 char *hash_to_string(char *hash, char *buf, int buffer_sz);
+char *unsigned_tx_to_str(tx_t *tx, uint64_t *len);
 
 static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
                        char *purpose, void *xxx);
@@ -431,6 +432,11 @@ bool tx_from_json(tx_t *tx, json_value *saved_tx, book_t *book) {
 
 bool effect_tx(hash_map *balances, array_t *users, tx_t *tx) {
 
+  if (!is_valid_tx(tx)) {
+    LOG("Transaction is invalid");
+    return false;
+  }
+
   if (tx->is_reward) {
     map_value *originator_pair = hash_map_get(balances, "originator");
     if (!originator_pair) {
@@ -491,7 +497,10 @@ bool add_tx(book_t *book, char *from, char *to, double amount, char *purpose) {
 static char *empty_str = "";
 static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
                        char *purpose, void *xxx) {
-  tx_t tx_ = {from, to, purpose ? purpose : empty_str, amount,
+  tx_t tx_ = {.from = from,
+              to,
+              purpose ? purpose : empty_str,
+              amount,
               xxx == add_tx_xxx};
   tx_t *tx = zmalloc(sizeof(*tx));
   memcpy(tx, &tx_, sizeof(tx_));
@@ -644,4 +653,35 @@ char *hash_to_string(char *hash, char *buf, int buffer_sz) {
            hash[28], hash[29], hash[30], hash[31]);
 
   return buf;
+}
+
+char *unsigned_tx_to_str(tx_t *tx, uint64_t *len) {
+  char tx_json[1024];
+  *len = snprintf(tx_json, 1024,
+                  ""
+                  "{\n"
+                  "  \"from\": \"%s\",\n"
+                  "  \"to\": \"%s\",\n"
+                  "  \"value\": %g,\n"
+                  "  \"for\": \"%s\",\n"
+                  "  \"reward\": %s\n"
+                  "}",
+                  tx->from, tx->to, tx->amount, tx->purpose,
+                  tx->is_reward ? "true" : "false");
+  return zstrdup(tx_json);
+}
+
+bool sign_tx(tx_t *tx, keystore *ks) {
+  uint64_t len;
+  char *tx_str = unsigned_tx_to_str(tx, &len);
+  if (!sign_buffer(tx->signature, tx_str, len, ks)) {
+    return false;
+  }
+  return true;
+}
+
+bool is_valid_tx(tx_t *tx) {
+  uint64_t len;
+  char *tx_str = unsigned_tx_to_str(tx, &len);
+  return verify_buffer(tx->signature, tx_str, len, tx->public_key);
 }

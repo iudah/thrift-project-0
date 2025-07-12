@@ -8,4 +8,5 @@ set(SOURCE_FILES
     src/wallet.c
     src/blake3.c
     src/base58.c
+    src/get_password.c
 )

@@ -96,6 +96,17 @@ int main(int argc, char *argv[]) {
         return -1;
       }
 
+      user_keystore = load_keystore(NULL);
+      if (!tx.from) {
+        tx.from = get_address_from_keystore();
+      } else if (strcmp(tx.from, get_address_from_keystore())) {
+        LOG("Incorrect sender address. Expected `%s` got `%s`.",
+            get_address_from_keystore(), tx.from);
+        return -1;
+      }
+
+      sign_tx(&tx, user_keystore);
+
       add_tx(book, tx.from, tx.to, tx.amount, tx.purpose);
       save_block(book);
       printf("Txs updated successfully.\n");
