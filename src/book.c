@@ -427,6 +427,22 @@ bool tx_from_json(tx_t *tx, json_value *saved_tx, book_t *book) {
     tx->purpose = zstrdup("");
   }
 
+  q = json_query(saved_tx, "signature");
+  if (q) {
+    LOG("Signature not found");
+    memcpy(tx->signature,
+           hex_decode(json_value_data(q).string,
+                      strlen(json_value_data(q).string)),
+           sizeof(tx->signature));
+  }
+
+  q = json_query(saved_tx, "public_key");
+  if (q) {
+    LOG("Public key not found");
+    tx->public_key = hex_decode(json_value_data(q).string,
+                                strlen(json_value_data(q).string));
+  }
+
   return effect_tx(book->balances, book->users, tx);
 }
 

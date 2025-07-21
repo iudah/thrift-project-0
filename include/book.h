@@ -103,4 +103,8 @@ bool verify_buffer(uint8_t signature[65], char *buffer, uint64_t buffer_length,
 char *get_address_from_keystore();
 void get_password(char *password, int max_length);
 
+uint8_t *hex_decode(const char *hex, uint32_t len);
+
+char *hex_encode(uint8_t *bin, uint32_t len);
+
 #endif

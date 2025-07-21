@@ -72,7 +72,8 @@ bool handle_add_tx(request_metadata_t *meta, char *buffer, book_t *book,
   }
   tx_t *tx = zcalloc(1, sizeof(*tx));
   if (!tx_from_json(tx, json, book)) {
-    const char *err = "{\"error\":\"Transaction processing failed\"}";
+    const char *err = "{\"error\":\"Transaction processing failed. "
+                      "Verify signature and public key\"}";
     http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL, NULL);
     zfree(tx);
     return true;
