@@ -5,10 +5,11 @@
 #include <inttypes.h>
 #include <sodium.h>
 #include <string.h>
+#include <wallet.h>
 #include <zot.h>
+#include <unistd.h>
 
-#define KEY_LEN 65
-// #define KEY_LEN crypto_box_SEEDBYTES
+
 #define SALT_LEN crypto_pwhash_SALTBYTES
 #define NONCE_LEN crypto_aead_xchacha20poly1305_ietf_NPUBBYTES
 #define CIPHERTEXT_LEN                                                         \
@@ -37,6 +38,7 @@ struct keystore {
 };
 
 keystore *user_keystore;
+extern char *KEYSTORE_FILE_PATH;
 
 void request_password(char **password_ptr);
 void blake3(uint8_t output[BLAKE3_OUT_LEN], uint8_t *buf, uint32_t n);
@@ -54,8 +56,9 @@ bool generate_key_pair(uint8_t *public_key, uint8_t *private_key) {
 bool derive_encryption_key(char *password, uint8_t *salt, uint32_t opslimit,
                            uint64_t memlimit, uint8_t *key_out) {
 
-  return crypto_pwhash(key_out, KEY_LEN, password, strlen(password), salt,
-                       opslimit, memlimit, crypto_pwhash_ALG_ARGON2ID13) == 0;
+  return crypto_pwhash(key_out, THRIFT_KEY_LEN, password, strlen(password),
+                       salt, opslimit, memlimit,
+                       crypto_pwhash_ALG_ARGON2ID13) == 0;
 }
 
 keystore *assemble_keystore(char *address, uint8_t *private_key,
@@ -110,6 +113,7 @@ bool compute_address(char *address, uint32_t *address_len,
 }
 
 keystore *create_wallet(char *password) {
+
   request_password(&password);
 
   uint8_t private_key[PRIVATE_KEY_LEN];
@@ -126,7 +130,7 @@ keystore *create_wallet(char *password) {
   uint32_t op_limit = crypto_pwhash_OPSLIMIT_MODERATE;
   uint64_t mem_limit = crypto_pwhash_MEMLIMIT_MODERATE;
 
-  uint8_t key[KEY_LEN];
+  uint8_t key[THRIFT_KEY_LEN];
 
   if (!derive_encryption_key(password, salt, op_limit, mem_limit, key)) {
     LOG("Failed to derive encryption key.");
@@ -159,8 +163,6 @@ keystore *create_wallet(char *password) {
 
   return ks;
 }
-
-char *keystore_path = NULL;
 
 char *hex_encode(uint8_t *bin, uint32_t len) {
   char hex[2 * len + 1];
@@ -215,16 +217,10 @@ uint8_t *hex_decode(const char *hex, uint32_t len) {
 }
 
 bool store_keystore_json(keystore *ks, uint8_t *key) {
-  if (keystore_path == NULL) {
-    char path[512];
-    memcpy(path, thrift_path, strlen(thrift_path) + 1);
-    strncat(path, "/.thrift/db/ks.json", 28);
-    keystore_path = zstrdup(path);
-  }
 
-  FILE *ks_file = fopen(keystore_path, "w+");
+  FILE *ks_file = fopen(KEYSTORE_FILE_PATH, "w+");
   if (!ks_file) {
-    LOG("Could not create file: %s.", keystore_path);
+    LOG("Could not create file: %s.", KEYSTORE_FILE_PATH);
     return false;
   }
 
@@ -295,16 +291,9 @@ bool verify_mac(char *address, char *ciphertext_hex, char *nonce_hex,
 keystore *load_keystore(char *password) {
   request_password(&password);
 
-  if (keystore_path == NULL) {
-    char path[512];
-    memcpy(path, thrift_path, strlen(thrift_path) + 1);
-    strncat(path, "/.thrift/db/ks.json", 28);
-    keystore_path = zstrdup(path);
-  }
-
-  FILE *ks_file = fopen(keystore_path, "r");
+  FILE *ks_file = fopen(KEYSTORE_FILE_PATH, "r");
   if (!ks_file) {
-    LOG("Could not open file: %s.", keystore_path);
+    LOG("Could not open file: %s.", KEYSTORE_FILE_PATH);
     return create_wallet(password);
   }
 
@@ -329,7 +318,7 @@ keystore *load_keystore(char *password) {
   q = json_query(params, "ops");
   uint64_t op_limit = (uint64_t)json_value_data(q).number;
 
-  uint8_t key[KEY_LEN];
+  uint8_t key[THRIFT_KEY_LEN];
 
   if (!derive_encryption_key(password, salt, op_limit, memlimit, key)) {
     LOG("Failed to derive encryption key.");
@@ -404,3 +393,13 @@ bool verify_buffer(uint8_t signature[129], char *buffer, uint64_t buffer_length,
 }
 
 char *get_address_from_keystore() { return user_keystore->address; }
+
+
+bool keystore_exists() {
+  #ifdef _WIN32
+  #define access _access
+  #endif
+  
+  return access(KEYSTORE_FILE_PATH, F_OK) == 0;
+}
+

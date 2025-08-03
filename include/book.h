@@ -107,4 +107,6 @@ uint8_t *hex_decode(const char *hex, uint32_t len);
 
 char *hex_encode(uint8_t *bin, uint32_t len);
 
+void set_paths();
+
 #endif

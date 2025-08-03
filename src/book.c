@@ -18,11 +18,12 @@
 #define HASH_BYTE_LEN 33
 #define BUFFER_LENGTH 4096
 
-char GENESIS_FILE_PATH[512];
-char BLOCKS_FILE_PATH[512];
-char BLOCKS_TMP_FILE_PATH[512];
-char HASH_FILE_PATH[512];
-char INCOMPLETE_BLOCK_FILE_PATH[512];
+char *GENESIS_FILE_PATH;
+char *BLOCKS_FILE_PATH;
+char *BLOCKS_TMP_FILE_PATH;
+char *HASH_FILE_PATH;
+char *INCOMPLETE_BLOCK_FILE_PATH;
+char *KEYSTORE_FILE_PATH;
 
 char *bootstrap_path = NULL;
 char *thrift_path = NULL;
@@ -32,6 +33,33 @@ char *unsigned_tx_to_str(tx_t *tx, uint64_t *len);
 
 static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
                        char *purpose, void *xxx);
+
+void set_paths() {
+  char tmp_path[512];
+  int len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/genesis.json",
+                     thrift_path);
+  GENESIS_FILE_PATH = zstrdup(tmp_path);
+
+  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/blocks.json",
+                 thrift_path);
+  BLOCKS_FILE_PATH = zstrdup(tmp_path);
+
+  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/hash.hash",
+                 thrift_path);
+  HASH_FILE_PATH = zstrdup(tmp_path);
+
+  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/~blocks.json",
+                 thrift_path);
+  BLOCKS_TMP_FILE_PATH = zstrdup(tmp_path);
+
+  len = snprintf(tmp_path, sizeof(tmp_path),
+                 "%s/.thrift/db/incomplete_block.json", thrift_path);
+  INCOMPLETE_BLOCK_FILE_PATH = zstrdup(tmp_path);
+
+  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/ks.json",
+                 thrift_path);
+  KEYSTORE_FILE_PATH = zstrdup(tmp_path);
+}
 
 bool load_genesis(book_t *book) {
 
@@ -172,17 +200,6 @@ book_t *load_book() {
       }
     }
   }
-
-  snprintf(GENESIS_FILE_PATH, sizeof(GENESIS_FILE_PATH),
-           "%s/.thrift/db/genesis.json", thrift_path);
-  snprintf(BLOCKS_FILE_PATH, sizeof(BLOCKS_FILE_PATH),
-           "%s/.thrift/db/blocks.json", thrift_path);
-  snprintf(HASH_FILE_PATH, sizeof(HASH_FILE_PATH), "%s/.thrift/db/hash.hash",
-           thrift_path);
-  snprintf(BLOCKS_TMP_FILE_PATH, sizeof(BLOCKS_TMP_FILE_PATH),
-           "%s/.thrift/db/~blocks.json", thrift_path);
-  snprintf(INCOMPLETE_BLOCK_FILE_PATH, sizeof(INCOMPLETE_BLOCK_FILE_PATH),
-           "%s/.thrift/db/incomplete_block.json", thrift_path);
 
   book_t *book = zcalloc(1, sizeof(*book));
   book->balances = create_hash_map();

@@ -156,11 +156,70 @@ bool handle_exit(request_metadata_t *meta, char *buffer, book_t *book,
   return true;
 }
 
+bool handle_create_wallet(request_metadata_t *meta, char *buffer, book_t *book,
+                          int connection_fd) {
+  {
+    // There doesn't ssem to be an incentive to do this yer. I think it is
+    // pointless for now.
+    // I want to do it though, so that I can setup the wallet on a cloud
+    // computer and allow a mobile device user to setup a mining node on the
+    // cloud computer.
+    // ToDo: Implement the above.
+
+    const char *err = "{\"error\":\"Wallet creation cannot be performed via "
+                      "API safely yet\"}";
+    http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL, NULL);
+    return true;
+  }
+
+  if (!meta->content_type ||
+      strncmp(meta->content_type, "application/json", 16)) {
+    const char *msg = "{\"error\":\"Malformed header\"}";
+    http_message(connection_fd, JSON_RESP, msg, strlen(msg), true, NULL, NULL);
+    return false;
+  }
+  if (!meta->payload) {
+    const char *msg = "{\"error\":\"Missing payload\"}";
+    http_message(connection_fd, JSON_RESP, msg, strlen(msg), true, NULL, NULL);
+    return false;
+  }
+  json_value *json = json_parse_string(meta->payload);
+  if (!json || json_value_type(json) != DICT) {
+    const char *msg = "{\"error\":\"Invalid message format\"}";
+    http_message(connection_fd, JSON_RESP, msg, strlen(msg), true, NULL, NULL);
+    return true;
+  }
+
+  // hash of encryption of password
+
+  json_value *q = json_query(json, "message");
+  if (!q) {
+    const char *err =
+        "{\"error\":\"Wallet creation failed for missing message\"}";
+    http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL, NULL);
+    return true;
+  }
+
+  /*
+  if (!peer_from_json(peer, json, peers)) {
+      const char *err = "{\"error\":\"Wallet creation failed\"}";
+      http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL,
+    NULL); zfree(peer); return true;
+    }
+  */
+
+  int len = snprintf(buffer, BUFFER_SIZE,
+                     "{\"name\":\"%s\",\"status\":\"success\"}", "lorem");
+  http_message(connection_fd, JSON_RESP, buffer, len, true, NULL, NULL);
+  return true;
+}
+
 void reg_endpoints() {
   register_route("/balances", handle_balances);
   register_route("/status", handle_status);
   register_route("/add_tx", handle_add_tx);
   register_route("/add_node", handle_add_node);
   register_route("/peers", handle_peers);
+  register_route("/create_wallet", handle_create_wallet);
   register_route("/exit", handle_exit);
 }

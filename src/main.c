@@ -2,6 +2,7 @@
 #include <bits/getopt.h>
 #include <getopt.h>
 #include <stdio.h>
+#include <wallet.h>
 #include <zot.h>
 #define _XOPEN_SOURCE 500
 #include <stdlib.h>
@@ -38,6 +39,9 @@ bool set_path(char *pathname, char **path, char *usr_path) {
     return false;
   }
   *path = zstrdup(usr_path);
+
+  set_paths();
+
   return path_set_only = true;
 }
 
@@ -58,6 +62,7 @@ int main(int argc, char *argv[]) {
       {"add-tx", required_argument, 0, 'a'},
       {"add-reward", no_argument, 0, 'r'},
       {"show-balances", no_argument, 0, 'b'},
+      {"create-wallet", no_argument, 0, 'c'},
       {"start-node", required_argument, 0, 's'},
       {"thrift", required_argument, 0, 'T'},
       {"bootstrap", required_argument, 0, 'B'},
@@ -66,8 +71,8 @@ int main(int argc, char *argv[]) {
   int opt_indx = 0;
   int c = 0;
 
-  while ((c = getopt_long(argc, argv, "a:rbs:T:B:", long_options, &opt_indx)) !=
-         -1) {
+  while ((c = getopt_long(argc, argv, "a:rbcs:T:B:", long_options,
+                          &opt_indx)) != -1) {
     switch (c) {
     case 'a': {
       tx_t tx = {.purpose = NULL};
@@ -131,6 +136,17 @@ int main(int argc, char *argv[]) {
       }
 
       show_balances(book);
+    } break;
+    case 'c': {
+      path_set_only = false;
+
+      if (keystore_exists()) {
+        LOG("Wallet already exists.");
+        // user_keystore = load_keystore(NULL);
+      } else {
+        user_keystore = create_wallet(NULL);
+      }
+      printf("Your address is: %s\n", get_address_from_keystore());
     } break;
     case 's': {
       int port = 80;
