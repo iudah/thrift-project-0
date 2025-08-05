@@ -22,6 +22,7 @@ list(APPEND CMAKE_PREFIX_PATH "${CMAKE_BINARY_DIR}/memalloc/lib/cmake/memalloc"
     "${CMAKE_BINARY_DIR}/sodium/lib/cmake/sodium")
 
 find_package(memalloc QUIET)
+add_library(memalloc_imported STATIC IMPORTED)
 if(NOT TARGET memalloc::memalloc)
     message(STATUS "memalloc not found, adding as ExternalProject")
     ExternalProject_Add(
@@ -39,16 +40,16 @@ if(NOT TARGET memalloc::memalloc)
 
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/memalloc/include")
 
-    add_library(memalloc_imported STATIC IMPORTED)
     add_dependencies(memalloc_imported MemAlloc)
-    set_target_properties(memalloc_imported PROPERTIES
-        IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/memalloc/lib/${CMAKE_STATIC_LIBRARY_PREFIX}memalloc${CMAKE_STATIC_LIBRARY_SUFFIX}"
-        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/memalloc/include"
-    )
     add_library(memalloc::memalloc ALIAS memalloc_imported)
 endif()
+set_target_properties(memalloc_imported PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/memalloc/lib/${CMAKE_STATIC_LIBRARY_PREFIX}memalloc${CMAKE_STATIC_LIBRARY_SUFFIX}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/memalloc/include"
+)
 
 find_package(zot QUIET)
+add_library(zot_imported STATIC IMPORTED)
 if(NOT TARGET zot::zot)
     message(STATUS "zot not found, adding as ExternalProject")
     ExternalProject_Add(
@@ -66,16 +67,16 @@ if(NOT TARGET zot::zot)
 
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/zot/include")
 
-    add_library(zot_imported STATIC IMPORTED)
     add_dependencies(zot_imported zot)
-    set_target_properties(zot_imported PROPERTIES
-        IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/zot/lib/${CMAKE_STATIC_LIBRARY_PREFIX}zot${CMAKE_STATIC_LIBRARY_SUFFIX}"
-        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/zot/include"
-    )
     add_library(zot::zot ALIAS zot_imported)
 endif()
+set_target_properties(zot_imported PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/zot/lib/${CMAKE_STATIC_LIBRARY_PREFIX}zot${CMAKE_STATIC_LIBRARY_SUFFIX}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/zot/include"
+)
 
 find_package(ison QUIET)
+add_library(ison_imported STATIC IMPORTED)
 if(NOT TARGET ison::ison)
     message(STATUS "ison not found, adding as ExternalProject")
     ExternalProject_Add(
@@ -93,14 +94,13 @@ if(NOT TARGET ison::ison)
 
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ison/include")
 
-    add_library(ison_imported STATIC IMPORTED)
     add_dependencies(ison_imported ison)
-    set_target_properties(ison_imported PROPERTIES
-        IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/ison/lib/${CMAKE_STATIC_LIBRARY_PREFIX}ison${CMAKE_STATIC_LIBRARY_SUFFIX}"
-        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/ison/include"
-    )
     add_library(ison::ison ALIAS ison_imported)
 endif()
+set_target_properties(ison_imported PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/ison/lib/${CMAKE_STATIC_LIBRARY_PREFIX}ison${CMAKE_STATIC_LIBRARY_SUFFIX}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/ison/include"
+)
 
 
 find_package(sodium QUIET)
@@ -265,6 +265,7 @@ target_include_directories(thrift
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include >
     $<INSTALL_INTERFACE:include>
 )
+
 target_link_libraries(thrift PUBLIC memalloc::memalloc)
 target_link_libraries(thrift PUBLIC zot::zot)
 target_link_libraries(thrift PUBLIC ison::ison)

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 #include <zot.h>
 
 #include "ds.h"
@@ -18,12 +19,12 @@
 #define HASH_BYTE_LEN 33
 #define BUFFER_LENGTH 4096
 
-char *GENESIS_FILE_PATH;
-char *BLOCKS_FILE_PATH;
-char *BLOCKS_TMP_FILE_PATH;
-char *HASH_FILE_PATH;
-char *INCOMPLETE_BLOCK_FILE_PATH;
-char *KEYSTORE_FILE_PATH;
+char *GENESIS_FILE_PATH = 0;
+char *BLOCKS_FILE_PATH = 0;
+char *BLOCKS_TMP_FILE_PATH = 0;
+char *HASH_FILE_PATH = 0;
+char *INCOMPLETE_BLOCK_FILE_PATH = 0;
+char *KEYSTORE_FILE_PATH = 0;
 
 char *bootstrap_path = NULL;
 char *thrift_path = NULL;
@@ -34,31 +35,58 @@ char *unsigned_tx_to_str(tx_t *tx, uint64_t *len);
 static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
                        char *purpose, void *xxx);
 
+void make_thrift_dirs(char *path) {
+  char *slash = path;
+  while ((slash = strstr(slash, "/"))) {
+    *slash = 0;
+    if (path[0] != 0 && access(path, F_OK) != 0) {
+      mkdir(path, 0777);
+      LOG("mkdir(%s)", path);
+    }
+    *slash = '/';
+    ++slash;
+  }
+  LOG("mkdir(%s)", path);
+}
+
 void set_paths() {
   char tmp_path[512];
   int len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/genesis.json",
                      thrift_path);
   GENESIS_FILE_PATH = zstrdup(tmp_path);
+  LOG("%s", tmp_path);
 
   len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/blocks.json",
                  thrift_path);
   BLOCKS_FILE_PATH = zstrdup(tmp_path);
+  LOG("%s", tmp_path);
 
   len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/hash.hash",
                  thrift_path);
   HASH_FILE_PATH = zstrdup(tmp_path);
+  LOG("%s", tmp_path);
 
   len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/~blocks.json",
                  thrift_path);
   BLOCKS_TMP_FILE_PATH = zstrdup(tmp_path);
+  LOG("%s", tmp_path);
 
   len = snprintf(tmp_path, sizeof(tmp_path),
                  "%s/.thrift/db/incomplete_block.json", thrift_path);
   INCOMPLETE_BLOCK_FILE_PATH = zstrdup(tmp_path);
+  LOG("%s", tmp_path);
 
   len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/ks.json",
                  thrift_path);
   KEYSTORE_FILE_PATH = zstrdup(tmp_path);
+  LOG("%s", tmp_path);
+
+  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/", thrift_path);
+  if (access(tmp_path, F_OK) != 0) {
+    make_thrift_dirs(tmp_path);
+  }
+  LOG("%s", GENESIS_FILE_PATH);
+  LOG("%s", KEYSTORE_FILE_PATH);
 }
 
 bool load_genesis(book_t *book) {

@@ -5,10 +5,9 @@
 #include <inttypes.h>
 #include <sodium.h>
 #include <string.h>
+#include <unistd.h>
 #include <wallet.h>
 #include <zot.h>
-#include <unistd.h>
-
 
 #define SALT_LEN crypto_pwhash_SALTBYTES
 #define NONCE_LEN crypto_aead_xchacha20poly1305_ietf_NPUBBYTES
@@ -116,6 +115,8 @@ keystore *create_wallet(char *password) {
 
   request_password(&password);
 
+  // compute_zerooo_address:
+
   uint8_t private_key[PRIVATE_KEY_LEN];
   uint8_t public_key[PUBLIC_KEY_LEN];
   if (!generate_key_pair(public_key, private_key)) {
@@ -155,6 +156,8 @@ keystore *create_wallet(char *password) {
     LOG("Failed to compute address.");
     return NULL;
   }
+  // if (address[0] != 0 && address[1] != 0 && address[2] != 0)
+  //   goto compute_zerooo_address;
 
   keystore *ks = assemble_keystore(address, private_key, public_key, ciphertext,
                                    ciphertext_len, nonce, nonce_len, salt,
@@ -394,12 +397,10 @@ bool verify_buffer(uint8_t signature[129], char *buffer, uint64_t buffer_length,
 
 char *get_address_from_keystore() { return user_keystore->address; }
 
-
 bool keystore_exists() {
-  #ifdef _WIN32
-  #define access _access
-  #endif
-  
+#ifdef _WIN32
+#define access _access
+#endif
+
   return access(KEYSTORE_FILE_PATH, F_OK) == 0;
 }
-
