@@ -1,0 +1,99 @@
+# ison - Lightweight JSON Parser in C
+
+ison is a lightweight JSON parser library written in C. Originally developed as part of another project, it was separated into its own standalone library for better reusability and maintainability.
+
+## Features
+
+- Simple API for parsing JSON from strings and files
+- Efficient tokenization with detailed error reporting
+- Handles all standard JSON types:
+  - Objects (hash maps)
+  - Arrays (dynamic arrays)
+  - Strings
+  - Numbers (integers and floats)
+  - Booleans
+  - Null values
+- Memory-safe with ([zot](github.com/iudah/zot)) custom allocator support
+- CMake build system with dependency management
+
+## Building
+
+### Prerequisites
+
+- CMake 3.19+
+- C compiler (C23 compatible)
+
+### Build Steps
+
+```bash
+mkdir build
+cd build
+cmake ..
+make
+```
+
+### Options
+
+- `BUILD_EXECUTABLE=ON` - Build test executable (default: ON)
+- `ENABLE_SANITIZERS=ON` - Enable address/undefined behavior sanitizers
+- `BUILD_TESTS=ON` - Build test suite (coming soon)
+
+## Usage
+
+```c
+#include "ison.h"
+
+int main() {
+    // Parse JSON from string
+    json_value* parsed = json_parse_string("{\"name\":\"John\", \"age\":30}");
+
+    // Query values
+    json_value* name = json_query(parsed, "name");
+    if(name && json_value_type(name) == TEXT) {
+        printf("Name: %s\n", name->value.string);
+    }
+
+    return 0;
+}
+```
+
+## API
+
+### Parsing Functions
+
+- `json_value* json_parse_string(char *str)`
+- `json_value* json_parse_file(FILE *f)`
+
+### Query Functions
+
+- `json_value* json_query(json_value *node, char *key)`
+- `map_value_type json_value_type(json_value *node)`
+
+## Data Types
+
+JSON values are represented as:
+
+```c
+typedef enum map_value_type {
+    UNKNOWN,
+    DICT,      // JSON object
+    LIST,      // JSON array
+    TEXT,      // String
+    INTEGERS,  // Integer
+    FLOATS,    // Floating point
+    BOOLEANS,  // true/false
+    NULLS      // null
+} map_value_type;
+```
+
+## Error Handling
+
+The parser provides detailed error messages with line and column information for invalid JSON inputs.
+
+## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request.
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.

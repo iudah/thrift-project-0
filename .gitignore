@@ -53,3 +53,16 @@ dkms.conf
 build/
 .vscode
 .cache
+
+# Vendor Generated Files
+vendor/libsodium/config.log
+vendor/libsodium/config.status
+vendor/libsodium/libsodium.pc
+vendor/libsodium/libsodium-uninstalled.pc
+vendor/libsodium/libtool
+vendor/libsodium/src/libsodium/**/*.o
+vendor/libsodium/src/libsodium/**/*.lo
+vendor/libsodium/src/libsodium/**/*.la
+vendor/libsodium/src/libsodium/.libs/
+
+vendor/XKCP/bin/

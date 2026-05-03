@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <memory.h>
+#include <sodium.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,7 +14,7 @@
 
 #include "ds.h"
 #include "ison.h"
-#include "sha256.h"
+#include "sodium/crypto_hash_sha256.h"
 
 #define HASH_STR_LEN 65
 #define HASH_BYTE_LEN 33
@@ -338,11 +339,9 @@ bool parse_block(book_t *book, FILE *blocks_file) {
     len += snprintf(buf + len, BUFFER_LENGTH - len, "]}");
 
     if (!is_single_block) {
-      SHA256_CTX ctx;
-      sha256_init(&ctx);
       char hash[32];
-      sha256_update(&ctx, (BYTE *)buf, len);
-      sha256_final(&ctx, (uint8_t *)hash);
+
+      crypto_hash_sha256((uint8_t *)hash, (uint8_t *)buf, len);
       snprintf(buf, sizeof(buf), "%s",
                hash_to_string(hash, (char[HASH_STR_LEN]){}, HASH_STR_LEN));
 
@@ -383,14 +382,9 @@ bool hash_txs(FILE *f, char *hash) {
 
   fread(bytes, 1, st.st_size, f);
 
-  SHA256_CTX ctx;
-
-  sha256_init(&ctx);
   char buf[256];
 
-  sha256_update(&ctx, bytes, st.st_size);
-
-  sha256_final(&ctx, (uint8_t *)hash);
+  crypto_hash_sha256((uint8_t *)hash, bytes, st.st_size);
 
   FILE *hash_file = fopen(HASH_FILE_PATH, "w");
   fwrite(hash, HASH_STR_LEN, 1, hash_file);
@@ -435,11 +429,7 @@ bool hash_block(book_t *book, char *string, uint64_t *string_len, char *hash) {
   len--;
   len += snprintf(buffer + len, BUFFER_LENGTH - len, "]}");
 
-  SHA256_CTX ctx;
-  sha256_init(&ctx);
-  sha256_update(&ctx, (BYTE *)buffer, len);
-  sha256_final(&ctx, (uint8_t *)hash);
-
+  crypto_hash_sha256((uint8_t *)hash, (uint8_t *)buffer, len);
   if (string_len)
     *string_len = len;
 
