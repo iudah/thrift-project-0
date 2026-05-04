@@ -2,7 +2,6 @@
 #include <arpa/inet.h>
 #include <inttypes.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -11,6 +10,7 @@
 #include "book.h"
 #include "ds.h"
 #include "ison.h"
+#include "node_context.h"
 #include "node_net.h"
 #include "router.h"
 
@@ -19,17 +19,17 @@ static array_t *peers;
 
 void set_handlers_peers(array_t *peer_list) { peers = peer_list; }
 
-bool handle_balances(request_metadata_t *meta, char *buffer, book_t *book,
-                     int connection_fd) {
+bool handle_balances(request_metadata_t *meta, node_context_t *ctx,
+                     char *buffer, int connection_fd) {
   uint64_t len = snprintf(buffer, BUFFER_SIZE,
                           "{\n"
                           "  \"hash\": \"%s\",\n"
                           "  \"balances\": {\n",
-                          book->block.parent_hash);
-  uint32_t n_user = array_length(book->users);
+                          ctx->book->block.parent_hash);
+  uint32_t n_user = array_length(ctx->book->users);
   for (uint32_t i = 0; i < n_user; ++i) {
-    char *account = array_get_ptr(book->users, i);
-    map_value *q = hash_map_get(book->balances, account);
+    char *account = array_get_ptr(ctx->book->users, i);
+    map_value *q = hash_map_get(ctx->book->balances, account);
     len +=
         snprintf(buffer + len, BUFFER_SIZE - len, "    \"%s\": %f%s\n", account,
                  json_value_data(q).number, i < n_user - 1 ? "," : "");
@@ -39,8 +39,9 @@ bool handle_balances(request_metadata_t *meta, char *buffer, book_t *book,
   return true;
 }
 
-bool handle_status(request_metadata_t *meta, char *buffer, book_t *book,
+bool handle_status(request_metadata_t *meta, node_context_t *ctx, char *buffer,
                    int connection_fd) {
+  book_t *book = ctx->book;
   int len = snprintf(buffer, BUFFER_SIZE,
                      "{\n"
                      "  \"hash\": \"%s\",\n"
@@ -51,7 +52,7 @@ bool handle_status(request_metadata_t *meta, char *buffer, book_t *book,
   return true;
 }
 
-bool handle_add_tx(request_metadata_t *meta, char *buffer, book_t *book,
+bool handle_add_tx(request_metadata_t *meta, node_context_t *ctx, char *buffer,
                    int connection_fd) {
   if (!meta->content_type ||
       strncmp(meta->content_type, "application/json", 16)) {
@@ -70,6 +71,7 @@ bool handle_add_tx(request_metadata_t *meta, char *buffer, book_t *book,
     http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL, NULL);
     return true;
   }
+  book_t *book = ctx->book;
   tx_t *tx = zcalloc(1, sizeof(*tx));
   if (!tx_from_json(tx, json, book)) {
     const char *err = "{\"error\":\"Transaction processing failed. "
@@ -90,8 +92,8 @@ bool handle_add_tx(request_metadata_t *meta, char *buffer, book_t *book,
   return true;
 }
 
-bool handle_add_node(request_metadata_t *meta, char *buffer, book_t *book,
-                     int connection_fd) {
+bool handle_add_node(request_metadata_t *meta, node_context_t *ctx,
+                     char *buffer, int connection_fd) {
   if (!meta->content_type ||
       strncmp(meta->content_type, "application/json", 16)) {
     const char *msg = "{\"error\":\"Malformed header\"}";
@@ -123,7 +125,7 @@ bool handle_add_node(request_metadata_t *meta, char *buffer, book_t *book,
   return true;
 }
 
-bool handle_peers(request_metadata_t *meta, char *buffer, book_t *book,
+bool handle_peers(request_metadata_t *meta, node_context_t *ctx, char *buffer,
                   int connection_fd) {
   if (!meta->payload) {
     const char *msg = "{\"error\":\"Missing payload\"}";
@@ -148,7 +150,7 @@ bool handle_peers(request_metadata_t *meta, char *buffer, book_t *book,
   return true;
 }
 
-bool handle_exit(request_metadata_t *meta, char *buffer, book_t *book,
+bool handle_exit(request_metadata_t *meta, node_context_t *ctx, char *buffer,
                  int connection_fd) {
   int len = snprintf(buffer, BUFFER_SIZE, "{\"status\": \"ended\"}\n");
   stop_listening();
@@ -156,15 +158,15 @@ bool handle_exit(request_metadata_t *meta, char *buffer, book_t *book,
   return true;
 }
 
-bool handle_create_wallet(request_metadata_t *meta, char *buffer, book_t *book,
-                          int connection_fd) {
+bool handle_create_wallet(request_metadata_t *meta, node_context_t *ctx,
+                          char *buffer, int connection_fd) {
   {
     // There doesn't ssem to be an incentive to do this yer. I think it is
     // pointless for now.
     // I want to do it though, so that I can setup the wallet on a cloud
     // computer and allow a mobile device user to setup a mining node on the
     // cloud computer.
-    // ToDo: Implement the above.
+    // TODO: Implement the above.
 
     const char *err = "{\"error\":\"Wallet creation cannot be performed via "
                       "API safely yet\"}";

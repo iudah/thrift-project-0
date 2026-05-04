@@ -3,8 +3,8 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -13,6 +13,7 @@
 #include "book.h"
 #include "ds.h"
 #include "ison.h"
+#include "node_context.h"
 #include "node_net.h"
 #include "router.h"
 
@@ -21,18 +22,16 @@
 
 extern int errno;
 int node_sock;
-static book_t *node_book;
-static array_t *peers;
+volatile sig_atomic_t listening = 0;
 sighandler_t sys_sig_int = NULL;
 pthread_t thread;
-volatile bool listening = true;
 pthread_mutex_t listen_lock = PTHREAD_MUTEX_INITIALIZER;
 
 char PEERS_FILE_PATH[512];
 
 void set_handlers_peers(array_t *peer_list);
 void reg_endpoints();
-void *add_peers_and_blocks(void *book);
+void *add_peers_and_blocks(node_context_t *ctx);
 
 bool create_socket(int *sock, char *address, int port, bool is_client_socket,
                    struct sockaddr_in *addr, int *addr_len) {
@@ -104,10 +103,10 @@ bool peer_from_json(peer_t *peer, json_value *saved_peer, array_t *peers) {
   return true;
 }
 
-bool run_node(book_t *book, char *address, int port) {
+bool run_node(node_context_t *ctx, book_t *book, char *address, int port) {
 
-  peers = create_array();
-  set_handlers_peers(peers);
+  ctx->peers = create_array();
+  set_handlers_peers(ctx->peers);
   reg_endpoints();
 
   if (bootstrap_path == NULL) {
@@ -117,7 +116,7 @@ bool run_node(book_t *book, char *address, int port) {
     bootstrap_path = zstrdup(path);
   }
 
-  node_book = book;
+  ctx->book = book;
   sys_sig_int = signal(SIGINT, (sighandler_t)stop_listening);
 
   // check list of peers
@@ -195,7 +194,7 @@ bool run_node(book_t *book, char *address, int port) {
             peer->port = bstrap_port;
             peer->name = bstrap_name;
 
-            array_append_ptr(peers, peer);
+            array_append_ptr(ctx->peers, peer);
           }
           close(sock);
         }
@@ -210,7 +209,7 @@ bool run_node(book_t *book, char *address, int port) {
   LOG("Node is running at %s:%d", address, port);
   fflush(stdout);
 
-  zthread_create(&thread, NULL, add_peers_and_blocks, book);
+  zthread_create(&thread, NULL, (void *)add_peers_and_blocks, ctx);
 
   struct sockaddr_in client;
   int sizeof_client = sizeof(client);
@@ -239,7 +238,7 @@ bool run_node(book_t *book, char *address, int port) {
     bool got_link = false, getting_link = false, done_processing = false;
 
     char *link = NULL;
-    if (!route_request(c, resp, book, connection_fd)) {
+    if (!route_request(c, resp, ctx, connection_fd)) {
       const char *err = "{\"error\":\"Invalid request format\"}";
       http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL,
                    NULL);
@@ -254,7 +253,7 @@ bool run_node(book_t *book, char *address, int port) {
   close(node_sock);
   if (array_length(book->block.txs) > 0) {
     LOG("Saving pending block.");
-    save_block(node_book);
+    save_block(ctx->book);
   }
 
   pthread_join(thread, NULL);
@@ -269,8 +268,8 @@ void stop_listening() {
   shutdown(node_sock, SHUT_RD);
 }
 
-void *add_peers_and_blocks(void *bookv) {
-  book_t *book = bookv;
+void *add_peers_and_blocks(node_context_t *ctx) {
+  book_t *book = ctx->book;
 
   while (1) {
     pthread_mutex_lock(&listen_lock);

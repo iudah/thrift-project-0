@@ -2,6 +2,7 @@
 #define NODE_NET_H
 
 #include "book.h"
+#include "node_context.h"
 #include <arpa/inet.h>
 
 typedef struct {
@@ -15,9 +16,8 @@ bool create_socket(int *sock, char *address, int port, bool is_client_socket,
 
 bool peer_from_json(peer_t *peer, json_value *saved_peer, array_t *peers);
 
-bool run_node(book_t *book, char *address, int port);
+bool run_node(node_context_t *ctx, book_t *book, char *address, int port);
 
 void stop_listening();
-
 
 #endif

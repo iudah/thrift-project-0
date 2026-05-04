@@ -1,3 +1,4 @@
+#include "node_context.h"
 #include <Thrift-Project.h>
 #include <bits/getopt.h>
 #include <getopt.h>
@@ -57,6 +58,7 @@ int main(int argc, char *argv[]) {
   }
 
   book_t *book = NULL;
+  node_context_t ctx;
 
   static struct option long_options[] = {
       {"add-tx", required_argument, 0, 'a'},
@@ -170,7 +172,7 @@ int main(int argc, char *argv[]) {
         return -1;
       }
 
-      run_node(book, address, port);
+      run_node(&ctx, book, address, port);
       printf("Node stopped.\n");
     } break;
     case 'T': {

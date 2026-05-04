@@ -4,16 +4,15 @@
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 #include <zot.h>
 
-#include "book.h"
 #include "ds.h"
 #include "ison.h"
+#include "node_context.h"
 #include "router.h"
 
 #define BUFFER_SIZE 2048
@@ -114,7 +113,7 @@ bool http_message(int fd, response_t type, const char *msg, uint64_t msg_len,
   return success;
 }
 
-bool route_request(char *message, char *buffer, book_t *book,
+bool route_request(char *message, char *buffer, node_context_t *ctx,
                    int connection_fd) {
   request_metadata_t *meta = parse_request(message);
 
@@ -125,7 +124,7 @@ bool route_request(char *message, char *buffer, book_t *book,
     return false;
   }
 
-  ((endpoint_handler_t)json_value_data(q).ptr)(meta, buffer, book,
+  ((endpoint_handler_t)json_value_data(q).ptr)(meta, ctx, buffer,
                                                connection_fd);
 
   return true;
