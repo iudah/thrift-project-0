@@ -1,6 +1,9 @@
 set(SOURCE_FILES
     src/main.c
     src/book.c
+    src/book_io.c
+    src/book_json.c
+    src/book_crypto.c
     src/node_net.c
     src/router.c
     src/http_handlers.c

@@ -82,7 +82,7 @@ bool handle_add_tx(request_metadata_t *meta, node_context_t *ctx, char *buffer,
   }
   array_append_ptr(book->block.txs, tx);
   char hash_bin[32];
-  hash_block(book, NULL, NULL, hash_bin);
+  hash_block(book, hash_bin);
   int len =
       snprintf(buffer, BUFFER_SIZE, "{\"hash\":\"%s\",\"status\":\"pending\"}",
                hash_to_string((char *)hash_bin, buffer + 11, 65));

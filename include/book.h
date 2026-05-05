@@ -62,7 +62,6 @@ typedef struct keystore keystore;
 
 bool show_balances(book_t *book);
 bool load_genesis(book_t *book);
-bool load_blocks(book_t *book);
 /**
  * @brief Initialize ledger state from persistent storage
  * @return Pointer to newly allocated book structure
@@ -70,11 +69,20 @@ bool load_blocks(book_t *book);
  */
 book_t *load_book();
 
-bool parse_block(book_t *book, FILE *blocks_file);
-bool verify_hash(book_t *book, FILE *tx_file);
-bool hash_txs(FILE *f, char *hash);
-bool hash_block(book_t *book, char *string, uint64_t *string_len, char *hash);
+char *join_path(const char *parent, const char *child);
+bool file_exists(const char *restrict fpath);
+bool setup_file_structure(const char *home);
+array_t *parse_block(book_t *book, FILE *blocks_file);
+bool verify_hash(book_t *book, uint8_t *bytes, uint64_t bytes_size);
+bool hash_txs(uint8_t *bytes, uint64_t byte_size, char hash[65]);
+bool hash_block(book_t *book, char hash[65]);
+bool hash_buffer(char *buffer, uint64_t len, char hash[65]);
+bool hash_file(FILE *f, uint8_t hash_out[65]);
+const char *get_thrift_home();
 
+bool replay_txs(book_t *book, const char *restrict home_path);
+
+bool block_from_json(block_t *blk, json_value *saved_blk, book_t *book);
 bool tx_from_json(tx_t *tx, json_value *saved_tx, book_t *book);
 bool effect_tx(hash_map *balances, array_t *users, tx_t *tx);
 
@@ -108,5 +116,18 @@ uint8_t *hex_decode(const char *hex, uint32_t len);
 char *hex_encode(uint8_t *bin, uint32_t len);
 
 void set_paths();
+
+uint64_t block_to_str(char *buffer, uint64_t len, block_t *blk);
+
+#define HASH_STR_LEN 65
+#define HASH_BYTE_LEN 33
+#define BUFFER_LENGTH 4096
+
+extern char *GENESIS_FILE_PATH;
+extern char *BLOCKS_FILE_PATH;
+extern char *BLOCKS_TMP_FILE_PATH;
+extern char *HASH_FILE_PATH;
+extern char *INCOMPLETE_BLOCK_FILE_PATH;
+extern char *KEYSTORE_FILE_PATH;
 
 #endif
