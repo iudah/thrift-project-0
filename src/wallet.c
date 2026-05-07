@@ -199,7 +199,7 @@ uint8_t *hex_decode(const char *hex, uint32_t len) {
     return NULL;
   }
 
-  uint8_t *dec = zcalloc(len / 2, sizeof(*dec));
+  uint8_t *dec = zcalloc(len / 2 + 1, sizeof(*dec));
   if (!dec) {
     LOG("Failed to allocate memory for decoding.");
     return NULL;

@@ -48,13 +48,13 @@ typedef struct book {
  * about the transaction purpose and reward status.
  */
 typedef struct {
-  uint8_t *public_key;
   char *from;     /**< Sending account name */
   char *to;       /**< Receiving account name */
   char *purpose;  /**< Description of transaction purpose */
   double amount;  /**< Transfer amount in native currency */
   bool is_reward; /**< Flag indicating system-generated reward transaction */
   uint8_t signature[65];
+  uint8_t public_key[33];
   uint64_t nonce;
 } tx_t;
 
@@ -75,15 +75,18 @@ bool setup_file_structure(const char *home);
 array_t *parse_block(book_t *book, FILE *blocks_file);
 bool verify_hash(book_t *book, uint8_t *bytes, uint64_t bytes_size);
 bool hash_txs(uint8_t *bytes, uint64_t byte_size, char hash[65]);
-bool hash_block(book_t *book, char hash[65]);
+bool hash_block(block_t *blk, char hash[65]);
 bool hash_buffer(char *buffer, uint64_t len, char hash[65]);
 bool hash_file(FILE *f, uint8_t hash_out[65]);
 const char *get_thrift_home();
+bool set_thrift_home(char *path);
 
 bool replay_txs(book_t *book, const char *restrict home_path);
 
-bool block_from_json(block_t *blk, json_value *saved_blk, book_t *book);
-bool tx_from_json(tx_t *tx, json_value *saved_tx, book_t *book);
+bool audit_block(block_t *blk);
+bool effect_block(block_t *blk, book_t *book);
+bool block_from_json(block_t *blk, json_value *saved_blk);
+bool tx_from_json(tx_t *tx, json_value *saved_tx);
 bool effect_tx(hash_map *balances, array_t *users, tx_t *tx);
 
 bool add_tx(book_t *book, char *from, char *to, double amount, char *purpose);
@@ -91,9 +94,9 @@ static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
                        char *purpose, void *xxx);
 
 bool add_reward(book_t *book);
-bool save_block(book_t *book);
+bool save_block(block_t *block);
 
-char *hash_to_string(char *hash, char *buf, int buffer_sz);
+char *hash_to_string(char *hash_bin, uint64_t bin_size, char *hash_hex);
 
 extern char *bootstrap_path;
 

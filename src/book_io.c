@@ -20,11 +20,9 @@
 
 bool file_exists(const char *restrict fpath) {
 
-#ifdef WIN32
-  return _access(fpath, F_OK) == 0;
-#else
-  return access(fpath, F_OK) == 0;
-#endif
+  struct stat sb;
+
+  return stat(fpath, &sb) == 0;
 }
 
 bool hash_file_and_save(char *fpath, uint8_t hash_out[HASH_STR_LEN]) {
@@ -59,13 +57,13 @@ array_t *parse_block(book_t *book, FILE *blocks_file) {
     for (uint32_t i = 0; i < len; ++i) {
       auto saved_blk = array_get_ptr(saved_blocks, i);
       auto block = zmalloc(sizeof(block_t));
-      block_from_json(block, saved_blk, book);
+      block_from_json(block, saved_blk);
 
       array_append_ptr(blocks, block);
     }
   } else {
     auto block = zmalloc(sizeof(block_t));
-    block_from_json(block, saved_block, book);
+    block_from_json(block, saved_block);
 
     array_append_ptr(blocks, block);
   }
@@ -73,19 +71,20 @@ array_t *parse_block(book_t *book, FILE *blocks_file) {
   return blocks;
 }
 
-bool save_block(book_t *book) {
-  if (array_length(book->block.txs) == 0) {
+bool save_block(block_t *block) {
+  if (array_length(block->txs) == 0) {
     return false;
   }
 
   char buffer[4096];
-  char hash_bin[32];
   char block_hash_hex[65];
 
-  hash_block(book, block_hash_hex);
+  auto len = block_to_str(buffer, sizeof(buffer), block);
+  hash_buffer(buffer, len, block_hash_hex);
 
   char hash_path[80];
   snprintf(hash_path, sizeof(hash_path), "blocks/%s.json", block_hash_hex);
+
   auto path = join_path(get_thrift_home(), hash_path);
 
   FILE *f = fopen(path, "wb");
@@ -99,10 +98,6 @@ bool save_block(book_t *book) {
     return false;
   fprintf(head, "%s", block_hash_hex);
   fclose(head);
-
-  memcpy(book->block.parent_hash, block_hash_hex, 65);
-  book->block.txs = create_array();
-  book->block.block_idx++;
 
   return true;
 }
@@ -211,24 +206,37 @@ bool replay_txs(book_t *book, const char *restrict home_path) {
       return false;
 
     auto read_size = fread(buffer, 1, sizeof(buffer), f);
+    buffer[read_size] = 0;
 
     fclose(f);
 
     hash_buffer(buffer, read_size, hash_out);
 
-    block_t blk;
-    auto block_json = json_parse_string(buffer);
-    block_from_json(&blk, block_json, book);
-
     if (strncmp(hash_out, hashjson, 64))
       return false;
+
+    block_t blk;
+    auto block_json = json_parse_string(buffer);
+    block_from_json(&blk, block_json);
+
+    if (!audit_block(&blk))
+      return false;
+    if (!effect_block(&blk, book))
+      return false;
   }
+
+  memcpy(&book->block.parent_hash, hash_out, 64);
 
   return true;
 }
 
+static char *thrift_home = NULL;
+bool set_thrift_home(char *path) {
+  thrift_home = zstrdup(path);
+  return true;
+}
+
 const char *get_thrift_home() {
-  static char *thrift_home = NULL;
 
   if (thrift_home != NULL) {
     return thrift_home;

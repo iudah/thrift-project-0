@@ -29,7 +29,7 @@ void print_help() {
          "from=<sender>,to=<reciever>,amount=<amount>[,note=<note>]\n"
          "thrift [--thrift \"path/to/.thrift\"] --show-balances\n"
          "thrift [--bootstrap \"path/to/bootstrap\" --thrift "
-         "\"path/to/.thrift\"] --start-node "
+         "\"path/to/.thrift/\"] --start-node "
          "address=<address>[,port=<port>]\n");
 }
 
@@ -39,9 +39,10 @@ bool set_path(char *pathname, char **path, char *usr_path) {
         usr_path);
     return false;
   }
-  *path = zstrdup(usr_path);
 
-  set_paths();
+  set_thrift_home(usr_path);
+
+  *path = (char *)get_thrift_home();
 
   return path_set_only = true;
 }

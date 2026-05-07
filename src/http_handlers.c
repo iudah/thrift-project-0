@@ -1,6 +1,7 @@
 #include <Thrift-Project.h>
 #include <arpa/inet.h>
 #include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -73,7 +74,7 @@ bool handle_add_tx(request_metadata_t *meta, node_context_t *ctx, char *buffer,
   }
   book_t *book = ctx->book;
   tx_t *tx = zcalloc(1, sizeof(*tx));
-  if (!tx_from_json(tx, json, book)) {
+  if (!tx_from_json(tx, json)) {
     const char *err = "{\"error\":\"Transaction processing failed. "
                       "Verify signature and public key\"}";
     http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL, NULL);
@@ -82,12 +83,12 @@ bool handle_add_tx(request_metadata_t *meta, node_context_t *ctx, char *buffer,
   }
   array_append_ptr(book->block.txs, tx);
   char hash_bin[32];
-  hash_block(book, hash_bin);
+  hash_block(&book->block, hash_bin);
   int len =
       snprintf(buffer, BUFFER_SIZE, "{\"hash\":\"%s\",\"status\":\"pending\"}",
-               hash_to_string((char *)hash_bin, buffer + 11, 65));
+               hash_to_string((char *)hash_bin, 32, (char[65]){0}));
   if (difftime(time(NULL), book->last_block_time) > 10)
-    save_block(book);
+    save_block(&book->block);
   http_message(connection_fd, JSON_RESP, buffer, len, true, NULL, NULL);
   return true;
 }

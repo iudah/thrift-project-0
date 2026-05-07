@@ -6,32 +6,30 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
-char *hash_to_string(char *hash, char *buf, int buffer_sz) {
-  snprintf(buf, buffer_sz,
-           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
-           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
-           "%02x%02x%02x%02x%02x%02x",
-           hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6],
-           hash[7], hash[8], hash[9], hash[10], hash[11], hash[12], hash[13],
-           hash[14], hash[15], hash[16], hash[17], hash[18], hash[19], hash[20],
-           hash[21], hash[22], hash[23], hash[24], hash[25], hash[26], hash[27],
-           hash[28], hash[29], hash[30], hash[31]);
+char *hash_to_string(char *hash_bin, uint64_t bin_size, char *hash_hex) {
+  char *hash = hash_bin;
+  const static char *hex = "0123456789abcdef";
+  for (uint64_t i = 0; i < bin_size; ++i) {
+    hash_hex[i * 2] = hex[(hash_bin[i] >> 4)];
+    hash_hex[i * 2 + 1] = hex[(hash_bin[i] & 15)];
+  }
+  hash_hex[bin_size * 2] = 0;
 
-  return buf;
+  return hash_hex;
 }
 
 bool verify_hash(book_t *book, uint8_t *bytes, uint64_t bytes_size) {
-  char hash[HASH_BYTE_LEN];
+  char hash[33];
   hash_txs(bytes, bytes_size, hash);
 
   if (!strncmp(hash, book->block.parent_hash, 32)) {
     return true;
   }
 
-  char expected_hash[HASH_STR_LEN], actual_hash[HASH_STR_LEN];
+  char expected_hash[65], actual_hash[65];
   LOG_ERROR("Hash verification failed\nExpected: %s\nActual:   %s",
-            hash_to_string(hash, expected_hash, HASH_STR_LEN),
-            hash_to_string(book->block.parent_hash, actual_hash, HASH_STR_LEN));
+            hash_to_string(hash, 32, expected_hash),
+            hash_to_string(book->block.parent_hash, 32, actual_hash));
   return false;
 }
 
@@ -53,15 +51,15 @@ bool hash_buffer(char *buffer, uint64_t len, char hash[65]) {
 
   uint8_t bin[33];
   crypto_hash_sha256(bin, (uint8_t *)buffer, len);
-  hash_to_string(hash, (char *)bin, 65);
+  hash_to_string((char *)bin, 32, hash);
 
   return true;
 }
 
-bool hash_block(book_t *book, char hash[65]) {
+bool hash_block(block_t *block, char hash[65]) {
 
   char buffer[4096];
-  auto len = block_to_str(buffer, sizeof(buffer), &book->block);
+  auto len = block_to_str(buffer, sizeof(buffer), block);
 
   return hash_buffer(buffer, len, hash);
 }
