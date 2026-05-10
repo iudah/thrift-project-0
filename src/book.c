@@ -1,5 +1,6 @@
 #include "book.h"
 
+#include <linux/stat.h>
 #include <memory.h>
 #include <sodium.h>
 #include <stdint.h>
@@ -13,104 +14,86 @@
 #include "genesis_header.h"
 #include "ison.h"
 
-#define HASH_STR_LEN 65
-#define HASH_BYTE_LEN 33
-#define BUFFER_LENGTH 4096
+char *bootstrap_path = nullptr;
+char *thrift_path = nullptr;
 
-char *GENESIS_FILE_PATH = 0;
-char *BLOCKS_FILE_PATH = 0;
-char *BLOCKS_TMP_FILE_PATH = 0;
-char *HASH_FILE_PATH = 0;
-char *INCOMPLETE_BLOCK_FILE_PATH = 0;
-char *KEYSTORE_FILE_PATH = 0;
+char *unsigned_tx_to_str(tx_t *txn, uint64_t *len);
 
-char *bootstrap_path = NULL;
-char *thrift_path = NULL;
-
-char *unsigned_tx_to_str(tx_t *tx, uint64_t *len);
-
-static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
+static bool add_tx_xxx(book_t *book, char *from, char *txn, double amount,
                        char *purpose, void *xxx);
 
-void make_thrift_dirs(char *path) {
-  char *slash = path;
-  while ((slash = strstr(slash, "/"))) {
-    *slash = 0;
-    if (path[0] != 0 && access(path, F_OK) != 0) {
-      mkdir(path, 0777);
-      LOG("mkdir(%s)", path);
-    }
-    *slash = '/';
-    ++slash;
-  }
-  LOG("mkdir(%s)", path);
-}
+bool effect_tx(hash_map *balances, array_t *users, tx_t *txn) {
 
-bool effect_tx(hash_map *balances, array_t *users, tx_t *tx) {
-
-  if (!is_valid_tx(tx)) {
+  if (!is_valid_tx(txn)) {
     LOG("Transaction is invalid");
     return false;
   }
 
-  double REWARD = 64;
+  double reward = REWARD;
 
-  if (!tx->is_reward || strncmp(tx->from, "SYSTEM", 6)) {
-    map_value *sender = hash_map_get(balances, tx->from);
+  if (!txn->is_reward || strncmp(txn->from, SYSTEM, strlen(SYSTEM))) {
+    map_value *sender = hash_map_get(balances, txn->from);
     if (!sender) {
-      LOG_ERROR("Sender account '%s' not found", tx->from);
+      LOG_ERROR("Sender account '%s' not found", txn->from);
       return false;
     }
     if (json_value_type(sender) != FLOATS) {
       return false;
     }
 
-    volatile double net = tx->amount;
+    volatile double net = txn->amount;
     double s_balance = json_value_data(sender).number;
     if (s_balance < net) {
-      LOG_ERROR("Insufficient funds for %s: %.10f < required %.10f", tx->from,
+      LOG_ERROR("Insufficient funds for %s: %.10f < required %.10f", txn->from,
                 s_balance, net);
       return false;
     }
 
     s_balance -= net;
-    hash_map_replace_number(balances, tx->from, s_balance);
+    hash_map_replace_number(balances, txn->from, s_balance);
   }
 
-  map_value *receiver = hash_map_get(balances, tx->to);
+  map_value *receiver = hash_map_get(balances, txn->to);
   if (receiver) {
     if (json_value_type(receiver) != FLOATS) {
       return false;
     }
-    double r_balance = json_value_data(receiver).number + tx->amount;
-    hash_map_replace_number(balances, tx->to, r_balance);
+    double r_balance = json_value_data(receiver).number + txn->amount;
+    hash_map_replace_number(balances, txn->to, r_balance);
   } else {
-    array_append_str(users, tx->to);
-    hash_map_add_number(balances, tx->to, tx->amount);
+    array_append_str(users, txn->to);
+    hash_map_add_number(balances, txn->to, txn->amount);
   }
 
   return true;
 }
 
-bool add_tx(book_t *book, char *from, char *to, double amount, char *purpose) {
-  return add_tx_xxx(book, from, to, amount, purpose, NULL);
-}
-
 static char *empty_str = "";
-static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
-                       char *purpose, void *xxx) {
-  tx_t tx_ = {.from = from,
-              to,
-              purpose ? purpose : empty_str,
-              amount,
-              xxx == add_tx_xxx};
-  tx_t *tx = zmalloc(sizeof(*tx));
-  memcpy(tx, &tx_, sizeof(tx_));
+bool add_tx(node_context_t *ctx, char *reciever, double amount, char *purpose,
+            bool reward) {
 
-  if (!effect_tx(book->balances, book->users, tx)) {
+  uint64_t str_len = 0;
+  char buffer[BUFFER_BIG] = {0};
+  tx_t txn = {.from = get_address_from_keystore(ctx->user_keystore),
+              reciever,
+              purpose ? purpose : "",
+              amount,
+              reward};
+
+  if (!sign_buffer(txn.signature, unsigned_tx_to_str(&txn, &str_len), str_len,
+                   ctx->user_keystore))
+    return false;
+
+  if (!effect_tx(ctx->book.balances, ctx->book.users, &txn)) {
     return false;
   }
-  array_append_ptr(book->block.txs, tx);
+
+  copy_public_key(ctx->user_keystore, &txn);
+
+  tx_t *txn_ptr = zmalloc(sizeof(*txn_ptr));
+  memcpy(txn_ptr, &txn, sizeof(txn));
+
+  array_append_ptr(ctx->book.block.txs, txn_ptr);
   return true;
 }
 
@@ -121,8 +104,8 @@ bool show_balances(book_t *book) {
   uint32_t n_user = array_length(book->users);
   for (uint32_t i = 0; i < n_user; i++) {
     char *account = array_get_ptr(book->users, i);
-    map_value *q = hash_map_get(book->balances, account);
-    printf("%-18s %18f\n", account, json_value_data(q).number);
+    map_value *usr_bal_json = hash_map_get(book->balances, account);
+    printf("%-18s %18.10f\n", account, json_value_data(usr_bal_json).number);
   }
 
   printf("Tx Hash: %s.\n", book->block.parent_hash);
@@ -135,9 +118,9 @@ bool add_reward(book_t *book) {
   return true;
 }
 
-char *unsigned_tx_to_str(tx_t *tx, uint64_t *len) {
-  char tx_json[1024];
-  *len = snprintf(tx_json, 1024,
+char *unsigned_tx_to_str(tx_t *txn, uint64_t *len) {
+  char tx_json[BUFFER_SMALL];
+  *len = snprintf(tx_json, BUFFER_SMALL,
                   ""
                   "{"
                   "\"from\":\"%s\","
@@ -146,31 +129,28 @@ char *unsigned_tx_to_str(tx_t *tx, uint64_t *len) {
                   "\"for\":\"%s\","
                   "\"reward\":%s"
                   "}",
-                  tx->from, tx->to, tx->amount, tx->purpose,
-                  tx->is_reward ? "true" : "false");
+                  txn->from, txn->to, txn->amount, txn->purpose,
+                  (int)txn->is_reward ? "true" : "false");
   return zstrdup(tx_json);
 }
 
-bool sign_tx(tx_t *tx, keystore *ks) {
+bool sign_tx(tx_t *txn, keystore *usr_ks) {
   uint64_t len;
-  char *tx_str = unsigned_tx_to_str(tx, &len);
-  if (!sign_buffer(tx->signature, tx_str, len, ks)) {
-    return false;
-  }
-  return true;
+  char *tx_str = unsigned_tx_to_str(txn, &len);
+  return sign_buffer(txn->signature, tx_str, len, usr_ks);
 }
 
-bool is_valid_tx(tx_t *tx) {
+bool is_valid_tx(tx_t *txn) {
   uint64_t len;
-  char *tx_str = unsigned_tx_to_str(tx, &len);
-  return verify_buffer(tx->signature, tx_str, len, tx->public_key);
+  char *tx_str = unsigned_tx_to_str(txn, &len);
+  return verify_buffer(txn->signature, tx_str, len, txn->public_key);
 }
 
 bool set_block_time(block_t *blk) {
   if (!blk)
     return false;
 
-  time_t now = time(NULL);
+  time_t now = time(nullptr);
   struct tm *tm_info = gmtime(&now);
 
   strftime(blk->block_time, sizeof(blk->block_time), "%FT%T", tm_info);
@@ -180,13 +160,13 @@ bool set_block_time(block_t *blk) {
 
 bool audit_block(block_t *blk) {
   auto ntx = array_length(blk->txs);
-  double REWARD = 64;
+  double reward = REWARD;
   for (uint64_t i = 0; i < ntx; ++i) {
-    tx_t *tx = array_get_ptr(blk->txs, i);
-    if (tx->is_reward) {
-      if (strncmp(tx->from, "SYSTEM", 6))
+    tx_t *txn = array_get_ptr(blk->txs, i);
+    if (txn->is_reward) {
+      if (strncmp(txn->from, SYSTEM, strlen(SYSTEM)))
         continue;
-      if (tx->amount > REWARD && blk->block_idx > 0) {
+      if (txn->amount > reward && blk->block_idx > 0) {
         LOG_ERROR("Excessive reward; likely invalid tx.");
         return false;
       }
@@ -197,10 +177,10 @@ bool audit_block(block_t *blk) {
 
 bool effect_block(block_t *blk, book_t *book) {
   auto ntx = array_length(blk->txs);
-  double REWARD = 64;
+  double reward = REWARD;
   for (uint64_t i = 0; i < ntx; ++i) {
-    tx_t *tx = array_get_ptr(blk->txs, i);
-    if (!effect_tx(book->balances, book->users, tx))
+    tx_t *txn = array_get_ptr(blk->txs, i);
+    if (!effect_tx(book->balances, book->users, txn))
       return false;
   }
   return true;
@@ -227,10 +207,9 @@ bool mine_genesis_block(book_t *book) {
   return true;
 }
 
-book_t *load_book() {
+bool load_book(book_t *book) {
   auto home = get_thrift_home();
 
-  book_t *book = zmalloc(sizeof(*book));
   book->users = create_array();
   book->balances = create_hash_map();
 
@@ -246,5 +225,5 @@ book_t *load_book() {
 
   book->block.txs = create_array();
 
-  return book;
+  return true;
 }

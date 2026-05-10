@@ -3,9 +3,7 @@
 
 #include "book.h"
 
-#define THRIFT_KEY_LEN (65)
-// #define THRIFT_KEY_LEN crypto_box_SEEDBYTES
-keystore *create_wallet(char *password);
+bool create_wallet(keystore *usr_ks);
 bool keystore_exists();
 
 #endif

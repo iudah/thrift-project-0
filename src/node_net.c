@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -13,7 +14,6 @@
 #include "book.h"
 #include "ds.h"
 #include "ison.h"
-#include "node_context.h"
 #include "node_net.h"
 #include "router.h"
 
@@ -23,11 +23,9 @@
 extern int errno;
 int node_sock;
 volatile sig_atomic_t listening = 0;
-sighandler_t sys_sig_int = NULL;
+sighandler_t sys_sig_int = nullptr;
 pthread_t thread;
 pthread_mutex_t listen_lock = PTHREAD_MUTEX_INITIALIZER;
-
-char PEERS_FILE_PATH[512];
 
 void set_handlers_peers(array_t *peer_list);
 void reg_endpoints();
@@ -41,7 +39,8 @@ bool create_socket(int *sock, char *address, int port, bool is_client_socket,
   if (pton_status == 0) {
     LOG("Invalid address format.");
     return false;
-  } else if (pton_status < 0) {
+  }
+  if (pton_status < 0) {
     LOG("An error occored:%s", strerror(errno));
     return false;
   }
@@ -77,52 +76,44 @@ bool create_socket(int *sock, char *address, int port, bool is_client_socket,
 
 bool peer_from_json(peer_t *peer, json_value *saved_peer, array_t *peers) {
 
-  json_value *q;
+  json_value *query;
 
-  q = json_query(saved_peer, "ip");
-  if (json_value_type(q) != TEXT) {
+  query = json_query(saved_peer, "ip");
+  if (json_value_type(query) != TEXT) {
     return false;
   }
-  peer->ip = json_value_data(q).string;
+  peer->ip = json_value_data(query).string;
 
-  q = json_query(saved_peer, "port");
-  if (json_value_type(q) != FLOATS) {
+  query = json_query(saved_peer, "port");
+  if (json_value_type(query) != FLOATS) {
     return false;
   }
-  peer->port = (int)json_value_data(q).number;
+  peer->port = (int)json_value_data(query).number;
 
-  q = json_query(saved_peer, "name");
-  if (q) {
-    if (json_value_type(q) != TEXT) {
+  query = json_query(saved_peer, "name");
+  if (query) {
+    if (json_value_type(query) != TEXT) {
       return false;
     }
-    peer->name = json_value_data(q).string;
+    peer->name = json_value_data(query).string;
   }
 
   array_append_ptr(peers, peer);
   return true;
 }
 
-bool run_node(node_context_t *ctx, book_t *book, char *address, int port) {
+bool run_node(node_context_t *ctx, char *address, int port) {
 
   ctx->peers = create_array();
   set_handlers_peers(ctx->peers);
   reg_endpoints();
 
-  if (bootstrap_path == NULL) {
-    char path[512];
-    memcpy(path, thrift_path, strlen(thrift_path) + 1);
-    strncat(path, "/.thrift/db/bootstrap.json", 28);
-    bootstrap_path = zstrdup(path);
-  }
-
-  ctx->book = book;
+  auto bootstrap_path = join_path(get_thrift_home(), "bootstrap.json");
+  auto peers_file_path = join_path(get_thrift_home(), "peers.json");
   sys_sig_int = signal(SIGINT, (sighandler_t)stop_listening);
 
   // check list of peers
-  snprintf(PEERS_FILE_PATH, sizeof(PEERS_FILE_PATH), "%s/.thrift/db/peers.json",
-           thrift_path);
-  FILE *peers_file = fopen(PEERS_FILE_PATH, "r");
+  FILE *peers_file = fopen(peers_file_path, "r");
   if (!peers_file) {
 
   } else {
@@ -146,25 +137,25 @@ bool run_node(node_context_t *ctx, book_t *book, char *address, int port) {
         char *bstrap_ip;
         int bstrap_port;
 
-        json_value *q;
+        json_value *query;
 
-        q = json_query(node, "ip");
-        if (json_value_type(q) != TEXT) {
+        query = json_query(node, "ip");
+        if (json_value_type(query) != TEXT) {
           return false;
         }
-        bstrap_ip = json_value_data(q).string;
+        bstrap_ip = json_value_data(query).string;
 
-        q = json_query(node, "port");
-        if (json_value_type(q) != FLOATS) {
+        query = json_query(node, "port");
+        if (json_value_type(query) != FLOATS) {
           return false;
         }
-        bstrap_port = (int)json_value_data(q).number;
+        bstrap_port = (int)json_value_data(query).number;
 
-        q = json_query(node, "name");
-        if (q != NULL && json_value_type(q) != TEXT) {
+        query = json_query(node, "name");
+        if (query != NULL && json_value_type(query) != TEXT) {
           return false;
         }
-        bstrap_name = q ? json_value_data(q).string : zstrdup("");
+        bstrap_name = query ? json_value_data(query).string : zstrdup("");
         // LOG("bootstrap.json appears to be malformed. Expected \"ip\" or "
         //     "\"port\".");
 
@@ -202,14 +193,14 @@ bool run_node(node_context_t *ctx, book_t *book, char *address, int port) {
     }
   }
 
-  if (!create_socket(&node_sock, address, port, false, NULL, NULL)) {
+  if (!create_socket(&node_sock, address, port, false, nullptr, nullptr)) {
     LOG_ERROR("Failed to initialize node socket");
     return false;
   }
   LOG("Node is running at %s:%d", address, port);
   fflush(stdout);
 
-  zthread_create(&thread, NULL, (void *)add_peers_and_blocks, ctx);
+  zthread_create(&thread, nullptr, (void *)add_peers_and_blocks, ctx);
 
   struct sockaddr_in client;
   int sizeof_client = sizeof(client);
@@ -224,9 +215,8 @@ bool run_node(node_context_t *ctx, book_t *book, char *address, int port) {
         write(connection_fd, err, strlen(err));
         close(connection_fd);
         continue;
-      } else {
-        break;
       }
+      break;
     }
     // process connection
     // TODO: use dynamic allocation for resp
@@ -234,14 +224,16 @@ bool run_node(node_context_t *ctx, book_t *book, char *address, int port) {
     char buffer[BUFFER_SIZE];
     int message_length = read(connection_fd, buffer, BUFFER_SIZE - 1);
     buffer[message_length] = 0;
-    char *c = buffer;
-    bool got_link = false, getting_link = false, done_processing = false;
+    char *curr_char = buffer;
+    bool got_link = false;
+    bool getting_link = false;
+    bool done_processing = false;
 
-    char *link = NULL;
-    if (!route_request(c, resp, ctx, connection_fd)) {
+    char *link = nullptr;
+    if (!route_request(curr_char, resp, ctx, connection_fd)) {
       const char *err = "{\"error\":\"Invalid request format\"}";
-      http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL,
-                   NULL);
+      http_message(connection_fd, JSON_RESP, err, strlen(err), true, nullptr,
+                   nullptr);
       close(connection_fd);
     }
 
@@ -251,33 +243,33 @@ bool run_node(node_context_t *ctx, book_t *book, char *address, int port) {
 
   shutdown(node_sock, SHUT_RDWR);
   close(node_sock);
-  if (array_length(book->block.txs) > 0) {
+  if (array_length(ctx->book.block.txs) > 0) {
     LOG("Saving pending block.");
-    save_block(ctx->book);
+    save_block(&ctx->book.block);
   }
 
-  pthread_join(thread, NULL);
+  pthread_join(thread, nullptr);
 
   return true;
 }
 
 void stop_listening() {
   pthread_mutex_lock(&listen_lock);
-  listening = false;
+  listening = 0;
   pthread_mutex_unlock(&listen_lock);
   shutdown(node_sock, SHUT_RD);
 }
 
 void *add_peers_and_blocks(node_context_t *ctx) {
-  book_t *book = ctx->book;
+  book_t *book = &ctx->book;
 
   while (1) {
     pthread_mutex_lock(&listen_lock);
-    bool adding_peers_and_block = listening;
+    bool adding_peers_and_block = listening == 1;
     pthread_mutex_unlock(&listen_lock);
 
     if (adding_peers_and_block) {
-      sleep(25);
+      sleep(SHA256_BIN_LEN);
       // Search and add peers
       // Search and add blocks
     }

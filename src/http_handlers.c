@@ -11,7 +11,6 @@
 #include "book.h"
 #include "ds.h"
 #include "ison.h"
-#include "node_context.h"
 #include "node_net.h"
 #include "router.h"
 
@@ -26,30 +25,31 @@ bool handle_balances(request_metadata_t *meta, node_context_t *ctx,
                           "{\n"
                           "  \"hash\": \"%s\",\n"
                           "  \"balances\": {\n",
-                          ctx->book->block.parent_hash);
-  uint32_t n_user = array_length(ctx->book->users);
+                          ctx->book.block.parent_hash);
+  uint32_t n_user = array_length(ctx->book.users);
   for (uint32_t i = 0; i < n_user; ++i) {
-    char *account = array_get_ptr(ctx->book->users, i);
-    map_value *q = hash_map_get(ctx->book->balances, account);
+    char *account = array_get_ptr(ctx->book.users, i);
+    map_value *balance = hash_map_get(ctx->book.balances, account);
     len +=
         snprintf(buffer + len, BUFFER_SIZE - len, "    \"%s\": %f%s\n", account,
-                 json_value_data(q).number, i < n_user - 1 ? "," : "");
+                 json_value_data(balance).number, i < n_user - 1 ? "," : "");
   }
   len += snprintf(buffer + len, BUFFER_SIZE - len, "  }\n}\n");
-  http_message(connection_fd, JSON_RESP, buffer, len, true, NULL, NULL);
+  http_message(connection_fd, JSON_RESP, buffer, len, true, nullptr, nullptr);
+
   return true;
 }
 
 bool handle_status(request_metadata_t *meta, node_context_t *ctx, char *buffer,
                    int connection_fd) {
-  book_t *book = ctx->book;
+  book_t *book = &ctx->book;
   int len = snprintf(buffer, BUFFER_SIZE,
                      "{\n"
                      "  \"hash\": \"%s\",\n"
                      "  \"block_count\": %i\n"
                      "}\n",
                      book->block.parent_hash, book->block.block_idx);
-  http_message(connection_fd, JSON_RESP, buffer, len, true, NULL, NULL);
+  http_message(connection_fd, JSON_RESP, buffer, len, true, nullptr, nullptr);
   return true;
 }
 
@@ -72,7 +72,7 @@ bool handle_add_tx(request_metadata_t *meta, node_context_t *ctx, char *buffer,
     http_message(connection_fd, JSON_RESP, err, strlen(err), true, NULL, NULL);
     return true;
   }
-  book_t *book = ctx->book;
+  book_t *book = &ctx->book;
   tx_t *tx = zcalloc(1, sizeof(*tx));
   if (!tx_from_json(tx, json)) {
     const char *err = "{\"error\":\"Transaction processing failed. "
@@ -82,11 +82,10 @@ bool handle_add_tx(request_metadata_t *meta, node_context_t *ctx, char *buffer,
     return true;
   }
   array_append_ptr(book->block.txs, tx);
-  char hash_bin[32];
-  hash_block(&book->block, hash_bin);
-  int len =
-      snprintf(buffer, BUFFER_SIZE, "{\"hash\":\"%s\",\"status\":\"pending\"}",
-               hash_to_string((char *)hash_bin, 32, (char[65]){0}));
+  char hash_hex[SHA256_HEX_LEN + 1];
+  hash_block(&book->block, hash_hex);
+  int len = snprintf(buffer, BUFFER_SIZE,
+                     "{\"hash\":\"%s\",\"status\":\"pending\"}", hash_hex);
   if (difftime(time(NULL), book->last_block_time) > 10)
     save_block(&book->block);
   http_message(connection_fd, JSON_RESP, buffer, len, true, NULL, NULL);

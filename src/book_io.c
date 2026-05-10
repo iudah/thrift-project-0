@@ -20,34 +20,15 @@
 
 bool file_exists(const char *restrict fpath) {
 
-  struct stat sb;
+  struct stat sbs;
 
-  return stat(fpath, &sb) == 0;
-}
-
-bool hash_file_and_save(char *fpath, uint8_t hash_out[HASH_STR_LEN]) {
-  FILE *f = fopen(fpath, "rb");
-
-  if (!f)
-    return false;
-
-  hash_file(f, hash_out);
-
-  fclose(f);
-
-  FILE *hash_file = fopen(HASH_FILE_PATH, "w");
-  if (hash_file) {
-    fwrite(hash_file, 1, HASH_STR_LEN, hash_file);
-    fclose(hash_file);
-  }
-
-  return true;
+  return stat(fpath, &sbs) == 0;
 }
 
 array_t *parse_block(book_t *book, FILE *blocks_file) {
   json_value *saved_block = json_parse_file(blocks_file);
   if (!saved_block)
-    return NULL;
+    return nullptr;
 
   array_t *blocks = create_array();
 
@@ -76,22 +57,23 @@ bool save_block(block_t *block) {
     return false;
   }
 
-  char buffer[4096];
-  char block_hash_hex[65];
+  char buffer[BUFFER_BIG];
+  char block_hash_hex[SHA256_HEX_BUF_LEN];
 
   auto len = block_to_str(buffer, sizeof(buffer), block);
   hash_buffer(buffer, len, block_hash_hex);
 
-  char hash_path[80];
+#define EXT_LEN (15)
+  char hash_path[SHA256_HEX_BUF_LEN + EXT_LEN];
   snprintf(hash_path, sizeof(hash_path), "blocks/%s.json", block_hash_hex);
 
-  auto path = join_path(get_thrift_home(), hash_path);
+  auto block_path = join_path(get_thrift_home(), hash_path);
 
-  FILE *f = fopen(path, "wb");
-  if (!f)
+  FILE *block_file = fopen(block_path, "wb");
+  if (!block_file)
     return false;
-  fprintf(f, "%s", buffer);
-  fclose(f);
+  fprintf(block_file, "%s", buffer);
+  fclose(block_file);
 
   FILE *head = fopen(join_path(get_thrift_home(), "HEAD.txt"), "wb");
   if (!head)
@@ -119,37 +101,37 @@ char *join_path(const char *parent, const char *child) {
 char *extract_parent_hash(char *buffer) {
   auto tmp = strstr(buffer, "parent_hash");
   if (!tmp)
-    return NULL;
+    return nullptr;
 
   tmp = strchr(tmp, ':');
   if (!tmp)
-    return NULL;
+    return nullptr;
 
   tmp = strchr(tmp, '"');
   if (!tmp)
-    return NULL;
+    return nullptr;
 
   char *current_hash = tmp + 1;
-  current_hash[64] = '\0';
+  current_hash[SHA256_HEX_LEN] = '\0';
 
   return current_hash;
 }
 
-bool is_genesis_parent(char hash[64]) {
+bool is_genesis_parent(const char hash[SHA256_HEX_LEN]) {
 
-  uint8_t i;
-  for (i = 0; i < 64; ++i) {
-    if (hash[i] != '0')
+  uint8_t indx;
+  for (indx = 0; indx < SHA256_HEX_LEN; ++indx) {
+    if (hash[indx] != '0')
       break;
   }
-  return (i == 64);
+  return (indx == SHA256_HEX_LEN);
 }
 
 array_t *list_blocks(const char *blocks_path, char *head_block) {
 
   array_t *paths = create_array();
 
-  char hashjson[70];
+  char hashjson[SHA256_HEX_BUF_LEN + EXT_LEN];
   char *current_hash = head_block;
 
   while (true) {
@@ -159,19 +141,20 @@ array_t *list_blocks(const char *blocks_path, char *head_block) {
 
     FILE *file = fopen(block_path, "rb");
     if (!file)
-      return NULL;
+      return nullptr;
 
     array_append_str(paths, zstrdup(hashjson));
 
-    char buffer[85];
-    auto read_size = fread(buffer, 1, 84, file);
+    char buffer[BUFFER_SMALL];
+    auto read_size = fread(buffer, 1, BUFFER_SMALL, file);
+    read_size = read_size >= BUFFER_SMALL ? BUFFER_SMALL - 1 : read_size;
     buffer[read_size] = 0;
 
     fclose(file);
 
     current_hash = extract_parent_hash(buffer);
     if (!current_hash)
-      return NULL;
+      return nullptr;
 
     if (is_genesis_parent(current_hash))
       break;
@@ -186,10 +169,11 @@ bool replay_txs(book_t *book, const char *restrict home_path) {
   if (!head)
     return false;
 
-  char buffer[4096];
-  char head_block[65];
-  char hash_out[65];
-  auto read_size = fread(head_block, 1, 65, head);
+  char buffer[BUFFER_BIG];
+  char head_block[SHA256_HEX_BUF_LEN];
+  char hash_out[SHA256_HEX_BUF_LEN];
+
+  auto read_size = fread(head_block, 1, SHA256_HEX_LEN, head);
   head_block[read_size] = 0;
   fclose(head);
 
@@ -200,19 +184,19 @@ bool replay_txs(book_t *book, const char *restrict home_path) {
   auto len = array_length(hashpaths);
   for (uint32_t i = len; i-- > 0;) {
     char *hashjson = array_get_ptr(hashpaths, i);
-    auto path = join_path(blocks_path, hashjson);
-    auto f = fopen(path, "rb");
-    if (!f)
+    auto block_path = join_path(blocks_path, hashjson);
+    auto blockjson = fopen(block_path, "rb");
+    if (!blockjson)
       return false;
 
-    auto read_size = fread(buffer, 1, sizeof(buffer), f);
+    auto read_size = fread(buffer, 1, sizeof(buffer), blockjson);
     buffer[read_size] = 0;
 
-    fclose(f);
+    fclose(blockjson);
 
     hash_buffer(buffer, read_size, hash_out);
 
-    if (strncmp(hash_out, hashjson, 64))
+    if (strncmp(hash_out, hashjson, SHA256_HEX_LEN))
       return false;
 
     block_t blk;
@@ -225,12 +209,18 @@ bool replay_txs(book_t *book, const char *restrict home_path) {
       return false;
   }
 
-  memcpy(&book->block.parent_hash, hash_out, 64);
+  memcpy(&book->block.parent_hash, hash_out, SHA256_HEX_LEN);
 
   return true;
 }
 
-static char *thrift_home = NULL;
+static char *node_bootstrap_path = nullptr;
+bool set_bootstrap_path(char *path) {
+  node_bootstrap_path = zstrdup(path);
+  return true;
+}
+
+static char *thrift_home = nullptr;
 bool set_thrift_home(char *path) {
   thrift_home = zstrdup(path);
   return true;
@@ -250,23 +240,21 @@ const char *get_thrift_home() {
 
   const char *home = getenv("HOME");
   if (home != NULL && home[0] != '\0') {
-    size_t len = strlen(home) + strlen("/.thrift") + 1;
-    thrift_home = (char *)zmalloc(len);
+    size_t length = strlen(home) + strlen("/.thrift") + 1;
+    thrift_home = (char *)zmalloc(length);
     if (thrift_home != NULL) {
       thrift_home = join_path(home, ".thrift/");
     }
     return thrift_home;
   }
 
-  return NULL;
+  return nullptr;
 }
 
 bool setup_file_structure(const char *home) {
   if (!file_exists(home) && make_dir(home) != 0)
     return false;
   auto path = join_path(home, "blocks");
-  if (!file_exists(path) && make_dir(path) != 0)
-    return false;
-
-  return true;
+  auto file_struct_success = !file_exists(path) && (make_dir(path) != 0);
+  return (bool)file_struct_success;
 }
