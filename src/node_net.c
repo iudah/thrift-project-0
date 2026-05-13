@@ -1,9 +1,13 @@
 #include <Thrift-Project.h>
 #include <arpa/inet.h>
+#include <asm-generic/poll.h>
+#include <bits/pthread_types.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,7 +19,6 @@
 #include "ds.h"
 #include "ison.h"
 #include "node_net.h"
-#include "router.h"
 
 #define BUFFER_SIZE 4096
 #define BACKLOG 8000
@@ -27,8 +30,6 @@ sighandler_t sys_sig_int = nullptr;
 pthread_t thread;
 pthread_mutex_t listen_lock = PTHREAD_MUTEX_INITIALIZER;
 
-void set_handlers_peers(array_t *peer_list);
-void reg_endpoints();
 void *add_peers_and_blocks(node_context_t *ctx);
 
 bool create_socket(int *sock, char *address, int port, bool is_client_socket,
@@ -102,96 +103,102 @@ bool peer_from_json(peer_t *peer, json_value *saved_peer, array_t *peers) {
   return true;
 }
 
+struct poll_array {
+  struct pollfd *fds;
+  uint64_t count;
+  uint64_t cap;
+};
+
+bool init_poll_array(struct poll_array *fds) {
+  fds->cap = BUFFER_SMALL;
+  fds->fds = zmalloc(fds->cap * sizeof(*fds->fds));
+  return fds->fds != nullptr;
+}
+
+bool add_pollfd(struct poll_array *fds, int file_desc) {
+  if (fds->count >= fds->cap) {
+    auto new_cap = fds->cap * 2;
+    auto tmp = zrealloc(fds->fds, new_cap * sizeof(*fds->fds));
+
+    if (!tmp)
+      return false;
+
+    fds->cap = new_cap;
+    fds->fds = tmp;
+  }
+
+  fds->fds[fds->count++].fd = file_desc;
+
+  return true;
+}
+
+bool del_pollfd(struct poll_array *fds, uint64_t index, int file_desc) {
+  if (index >= fds->count || fds->fds[index].fd != file_desc)
+    return false;
+
+  fds->fds[index] = fds->fds[--fds->count];
+
+  return true;
+}
+
+struct worker_arg {
+  struct poll_array fds;
+  struct {
+    int32_t readfd;
+    int32_t writefd;
+  } pipe;
+  pthread_t thread;
+};
+
+void *web_worker(void *arg) {
+  struct worker_arg *worker = arg;
+  while (true) {
+    auto ret = poll(worker->fds.fds, worker->fds.count, -1);
+    if (ret < 0)
+      break;
+
+    for (uint64_t i = 0; i < worker->fds.count; ++i) {
+
+      if (worker->fds.fds[i].fd == worker->pipe.readfd &&
+          (worker->fds.fds[i].revents & POLLIN)) {
+        bool listening;
+        read(worker->pipe.readfd, &listening, 1);
+
+        if (!listening)
+          break;
+
+        continue;
+      }
+
+      if (worker->fds.fds[i].revents & POLLIN) {
+        auto client_fd = worker->fds.fds[i].fd;
+
+        char *buffer = zmalloc(BUFFER_BIG + 1);
+        // handle reqs
+        auto read_size = read(client_fd, buffer, BUFFER_BIG);
+
+        if (read_size < 0) {
+          auto errmsg = strerror(errno);
+          write(client_fd, errmsg, strlen(errmsg));
+        } else {
+        }
+
+        shutdown(client_fd, SHUT_RDWR);
+        close(client_fd);
+        del_pollfd(&worker->fds, i, client_fd);
+      }
+    }
+  }
+  return nullptr;
+}
+
 bool run_node(node_context_t *ctx, char *address, int port) {
 
   ctx->peers = create_array();
   set_handlers_peers(ctx->peers);
   reg_endpoints();
 
-  auto bootstrap_path = join_path(get_thrift_home(), "bootstrap.json");
-  auto peers_file_path = join_path(get_thrift_home(), "peers.json");
   sys_sig_int = signal(SIGINT, (sighandler_t)stop_listening);
-
-  // check list of peers
-  FILE *peers_file = fopen(peers_file_path, "r");
-  if (!peers_file) {
-
-  } else {
-    // check if peers are available
-  }
-
-  if (!peers_file /*or no peers available*/) {
-    FILE *bootstrap_file = fopen(bootstrap_path, "r");
-    if (!bootstrap_file) {
-      LOG("No bootstraps found, assuming we are the only running node.");
-    } else {
-      auto json = json_parse_file(bootstrap_file);
-      if (!json || json_value_type(json) != LIST) {
-        LOG("bootstrap.json appears to be malformed.");
-      }
-      array_t *boots = json_value_data(json).ptr;
-      uint32_t boot_strap_len = array_length(boots);
-      for (int i = 0; i < boot_strap_len; i++) {
-        json_value *node = array_get(boots, i);
-        char *bstrap_name = "";
-        char *bstrap_ip;
-        int bstrap_port;
-
-        json_value *query;
-
-        query = json_query(node, "ip");
-        if (json_value_type(query) != TEXT) {
-          return false;
-        }
-        bstrap_ip = json_value_data(query).string;
-
-        query = json_query(node, "port");
-        if (json_value_type(query) != FLOATS) {
-          return false;
-        }
-        bstrap_port = (int)json_value_data(query).number;
-
-        query = json_query(node, "name");
-        if (query != NULL && json_value_type(query) != TEXT) {
-          return false;
-        }
-        bstrap_name = query ? json_value_data(query).string : zstrdup("");
-        // LOG("bootstrap.json appears to be malformed. Expected \"ip\" or "
-        //     "\"port\".");
-
-        int sock;
-        struct sockaddr_in addr;
-        int addr_len;
-        // for each ip:port request to be addded
-        if (!create_socket(&sock, bstrap_ip, bstrap_port, true, &addr,
-                           &addr_len)) {
-          LOG("Failed to create socket.");
-        } else {
-          int status = connect(sock, (const struct sockaddr *)&addr, addr_len);
-          if (status < 0) {
-            LOG("Connection to %s:%i failed.", bstrap_ip, bstrap_port);
-          } else {
-            char buffer[BUFFER_SIZE];
-            snprintf(buffer, BUFFER_SIZE, "{\"ip\":\"%s\",\"port\":%i}",
-                     address, port);
-            http_message(sock, JSON_RESP, buffer, strlen(buffer), false, "POST",
-                         "/add_node");
-            // add to list of peers if alive
-            read(sock, buffer, sizeof(buffer));
-            puts(buffer);
-            // add peer
-            peer_t *peer = zmalloc(sizeof(*peer));
-            peer->ip = bstrap_ip;
-            peer->port = bstrap_port;
-            peer->name = bstrap_name;
-
-            array_append_ptr(ctx->peers, peer);
-          }
-          close(sock);
-        }
-      }
-    }
-  }
 
   if (!create_socket(&node_sock, address, port, false, nullptr, nullptr)) {
     LOG_ERROR("Failed to initialize node socket");
@@ -205,58 +212,70 @@ bool run_node(node_context_t *ctx, char *address, int port) {
   struct sockaddr_in client;
   int sizeof_client = sizeof(client);
   int connection_fd;
-  // return true;
+
+#define N_THREADS (4)
+  struct worker_arg workers[N_THREADS] = {nullptr};
+  for (uint64_t i = 0; i < N_THREADS; ++i) {
+    init_poll_array(&workers[i].fds);
+    zthread_create(&workers[i].thread, nullptr, (void *)web_worker,
+                   &workers[i]);
+
+    if (pipe((int *)&workers[i].pipe) == -1) {
+      LOG_ERROR("%s.", strerror(errno));
+      return false;
+    }
+
+    add_pollfd(&workers[i].fds, workers[i].pipe.readfd);
+  }
+
+  struct pollfd fds = {node_sock};
+
+#define TIMEOUT (250)
+
   while (listening) {
+
+    auto n_open_fds = poll(&fds, 1, TIMEOUT);
+
+    if (n_open_fds <= 0)
+      continue;
+    if (!(fds.revents & POLLIN))
+      continue;
+
     if ((connection_fd = accept(node_sock, (struct sockaddr *)&client,
                                 &sizeof_client)) < 0) {
-      if (listening) {
-        LOG("Accept failed: %s", strerror(errno));
-        const char *err = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
-        write(connection_fd, err, strlen(err));
-        close(connection_fd);
-        continue;
+      LOG_ERROR("Accept failed: %s.", strerror(errno));
+      continue;
+    }
+
+    struct worker_arg *worker = nullptr;
+    for (uint64_t i = 0; i < N_THREADS; ++i) {
+      if (!worker || worker->fds.count > workers[i].fds.count) {
+        worker = &workers[i];
       }
-      break;
-    }
-    // process connection
-    // TODO: use dynamic allocation for resp
-    char resp[BUFFER_SIZE];
-    char buffer[BUFFER_SIZE];
-    int message_length = read(connection_fd, buffer, BUFFER_SIZE - 1);
-    buffer[message_length] = 0;
-    char *curr_char = buffer;
-    bool got_link = false;
-    bool getting_link = false;
-    bool done_processing = false;
-
-    char *link = nullptr;
-    if (!route_request(curr_char, resp, ctx, connection_fd)) {
-      const char *err = "{\"error\":\"Invalid request format\"}";
-      http_message(connection_fd, JSON_RESP, err, strlen(err), true, nullptr,
-                   nullptr);
-      close(connection_fd);
+      if (worker->fds.count == 1) {
+        break;
+      }
     }
 
-    shutdown(connection_fd, SHUT_RDWR);
-    close(connection_fd);
+    add_pollfd(&worker->fds, connection_fd);
+    write(worker->pipe.writefd, (bool[1]){true}, 1);
   }
 
   shutdown(node_sock, SHUT_RDWR);
   close(node_sock);
-  if (array_length(ctx->book.block.txs) > 0) {
-    LOG("Saving pending block.");
-    save_block(&ctx->book.block);
-  }
 
   pthread_join(thread, nullptr);
+
+  for (uint64_t i = 0; i < N_THREADS; ++i) {
+    write(workers[i].pipe.writefd, (bool[1]){false}, 1);
+    pthread_join(workers[i].thread, nullptr);
+  }
 
   return true;
 }
 
 void stop_listening() {
-  pthread_mutex_lock(&listen_lock);
   listening = 0;
-  pthread_mutex_unlock(&listen_lock);
   shutdown(node_sock, SHUT_RD);
 }
 
@@ -269,7 +288,6 @@ void *add_peers_and_blocks(node_context_t *ctx) {
     pthread_mutex_unlock(&listen_lock);
 
     if (adding_peers_and_block) {
-      sleep(SHA256_BIN_LEN);
       // Search and add peers
       // Search and add blocks
     }

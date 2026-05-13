@@ -74,6 +74,7 @@ typedef struct block {
                                            %Y-%m-%dT%H:%M:%S */
   array_t *txs; /**< Array of transactions included in this block */
   int block_idx;
+  uint64_t nonce;
 } block_t;
 
 /**
@@ -105,7 +106,6 @@ typedef struct {
   bool is_reward; /**< Flag indicating system-generated reward transaction */
   uint8_t signature[ED25519_BIN_BUF_LEN];
   uint8_t public_key[SHA256_BIN_BUF_LEN];
-  uint64_t nonce;
 } tx_t;
 
 typedef struct keystore keystore;
@@ -133,8 +133,113 @@ typedef struct {
   book_t book;
 } node_context_t;
 
-void blake3(uint8_t output[BLAKE3_OUT_LEN], const uint8_t *buf, uint32_t n);
+typedef struct {
+  char *name;
+  char *ip;
+  int port;
+} peer_t;
+
+typedef struct {
+  char *method;
+  char *path;
+  char *content_type;
+  char *payload;
+} request_metadata_t;
+
+typedef enum { JSON_RESP, TEXT_RESP } response_t;
+
+typedef bool (*endpoint_handler_t)(request_metadata_t *meta,
+                                   node_context_t *ctx, char *buffer,
+                                   int connection_fd);
+
+// =====================================================================
+// Group 1: Book and transaction core (src/book.c)
+// =====================================================================
+bool add_tx(node_context_t *ctx, char *reciever, double amount, char *purpose,
+            bool reward);
+bool show_balances(book_t *book);
+bool audit_block(block_t *blk);
+bool effect_block(block_t *blk, book_t *book);
+bool load_book(book_t *book);
+
+// =====================================================================
+// Group 2: Wallet and keystore (src/wallet.c, src/get_password.c)
+// =====================================================================
+void get_password(char *password, int max_length);
+keystore *init_keystore(void);
+bool create_wallet(keystore *usr_ks);
+bool load_keystore(keystore *usr_ks);
+bool sign_buffer(uint8_t signature[ED25519_BIN_LEN], const char *buffer,
+                 uint64_t buffer_length, keystore *usr_ks);
+bool verify_buffer(const uint8_t signature[ED25519_BIN_LEN], const char *buffer,
+                   uint64_t buffer_length,
+                   const uint8_t public_key[PUBLIC_KEY_BIN_LEN]);
+void copy_public_key(keystore *usr_ks, tx_t *txn);
+char *get_address_from_keystore(keystore *user_keystore);
 bool store_keystore_json(keystore *usr_ks, const uint8_t key[KEY_BIN_LEN]);
+
+// =====================================================================
+// Group 3: Networking, HTTP handlers, and routing
+// (src/node_net.c, src/http_handlers.c, src/router.c)
+// =====================================================================
+bool peer_from_json(peer_t *peer, json_value *saved_peer, array_t *peers);
+bool run_node(node_context_t *ctx, char *address, int port);
+void stop_listening(void);
+void set_handlers_peers(array_t *peer_list);
+bool handle_balances(request_metadata_t *meta, node_context_t *ctx,
+                     char *buffer, int connection_fd);
+bool handle_status(request_metadata_t *meta, node_context_t *ctx, char *buffer,
+                   int connection_fd);
+bool handle_add_tx(request_metadata_t *meta, node_context_t *ctx, char *buffer,
+                   int connection_fd);
+bool handle_add_node(request_metadata_t *meta, node_context_t *ctx,
+                     char *buffer, int connection_fd);
+bool handle_peers(request_metadata_t *meta, node_context_t *ctx, char *buffer,
+                  int connection_fd);
+bool handle_exit(request_metadata_t *meta, node_context_t *ctx, char *buffer,
+                 int connection_fd);
+bool handle_create_wallet(request_metadata_t *meta, node_context_t *ctx,
+                          char *buffer, int connection_fd);
+void reg_endpoints(void);
+bool register_route(char *endpoint, endpoint_handler_t handler);
+bool http_message(int file_descriptor, response_t type, const char *msg,
+                  uint64_t msg_len, bool is_server_resp, char *method,
+                  char *endpoint);
+
+// =====================================================================
+// Group 4: JSON serialization for blocks and transactions (src/book_json.c)
+// =====================================================================
+uint64_t block_to_str(char *buffer, uint64_t len, block_t *blk);
+bool tx_from_json(tx_t *txn, json_value *saved_tx);
+bool block_from_json(block_t *blk, json_value *saved_blk);
+
+// =====================================================================
+// Group 5: Cryptographic helpers (src/book_crypto.c)
+// =====================================================================
+char *hash_bin_to_hex(const uint8_t *hash_bin, uint64_t bin_size,
+                      char *hash_hex);
+uint8_t *hash_hex_to_bin(const char *hex, uint64_t len, uint8_t *hash_bin);
+bool hash_buffer(char *buffer, uint64_t len, char hash_out[SHA256_HEX_BUF_LEN]);
+bool hash_block(block_t *block, char hash_out[SHA256_HEX_BUF_LEN]);
+
+// =====================================================================
+// Group 6: File system and persistence (src/book_io.c)
+// =====================================================================
+bool file_exists(const char *restrict fpath);
+bool save_block(block_t *block);
+char *join_path(const char *parent, const char *child);
+bool replay_txs(book_t *book, const char *restrict home_path);
+bool set_bootstrap_path(char *path);
+bool set_thrift_home(char *path);
+const char *get_thrift_home(void);
+bool setup_file_structure(const char *home);
+
+// =====================================================================
+// Group 7: Command-line argument parsing (src/cli.c)
+// =====================================================================
+bool parse_cli_args(int argc, char *argv[], node_config_t *config);
+
+void blake3(uint8_t output[BLAKE3_OUT_LEN], const uint8_t *buf, uint32_t n);
 bool compute_mac(const char *address, const char *ciphertext_hex,
                  const char *nonce_hex, const char *salt_hex,
                  const uint8_t key[KEY_BIN_LEN], uint8_t hash[MAC_BIN_LEN]);
@@ -143,56 +248,15 @@ bool verify_mac(const char *address, const char *ciphertext_hex,
                 const uint8_t key[KEY_BIN_LEN],
                 const uint8_t hash[MAC_BIN_LEN]);
 
-bool parse_cli_args(int argc, char *argv[], node_config_t *config);
-
-bool sign_buffer(uint8_t signature[ED25519_BIN_LEN], const char *buffer,
-                 uint64_t buffer_length, keystore *usr_ks);
-bool verify_buffer(const uint8_t signature[ED25519_BIN_LEN], const char *buffer,
-                   uint64_t buffer_length,
-                   const uint8_t public_key[PUBLIC_KEY_BIN_LEN]);
-bool show_balances(book_t *book);
 bool load_genesis(book_t *book);
-bool load_book(book_t *book);
-void copy_public_key(keystore *usr_ks, tx_t *txn);
-
 void request_password(char password_ptr[BUFFER_SMALL]);
-char *join_path(const char *parent, const char *child);
-bool file_exists(const char *restrict fpath);
-bool setup_file_structure(const char *home);
 array_t *parse_block(book_t *book, FILE *blocks_file);
 bool verify_hash(book_t *book, uint8_t *bytes, uint64_t bytes_size);
-bool hash_block(block_t *block, char hash_out[SHA256_HEX_BUF_LEN]);
-bool hash_buffer(char *buffer, uint64_t len, char hash_out[SHA256_HEX_BUF_LEN]);
 bool hash_file(FILE *file, uint8_t hash_out[SHA256_HEX_BUF_LEN]);
-const char *get_thrift_home();
-bool set_thrift_home(char *path);
-bool set_bootstrap_path(char *path);
-
-bool replay_txs(book_t *book, const char *restrict home_path);
-
-bool audit_block(block_t *blk);
-bool effect_block(block_t *blk, book_t *book);
-bool block_from_json(block_t *blk, json_value *saved_blk);
-bool tx_from_json(tx_t *txn, json_value *saved_tx);
 bool effect_tx(hash_map *balances, array_t *users, tx_t *txn);
 
-bool add_tx(node_context_t *ctx, char *reciever, double amount, char *purpose,
-            bool reward);
-
 bool add_reward(book_t *book);
-bool save_block(block_t *block);
-
-char *hash_bin_to_hex(const uint8_t *hash_bin, uint64_t bin_size,
-                      char *hash_hex);
-uint8_t *hash_hex_to_bin(const char *hex, uint64_t len, uint8_t *hash_bin);
-
-bool load_keystore(keystore *usr_ks);
-keystore *init_keystore();
 bool sign_tx(tx_t *txn, keystore *usr_ks);
 bool is_valid_tx(tx_t *txn);
-char *get_address_from_keystore(keystore *user_keystore);
-void get_password(char *password, int max_length);
-
-uint64_t block_to_str(char *buffer, uint64_t len, block_t *blk);
 
 #endif
