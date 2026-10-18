@@ -1,0 +1,19 @@
+[submodule "vendor/BLAKE3"]
+	path = vendor/BLAKE3
+	url = https://github.com/BLAKE3-team/BLAKE3.git
+[submodule "vendor/libsodium"]
+	path = vendor/libsodium
+	url = https://github.com/jedisct1/libsodium
+	branch = stable
+[submodule "vendor/XKCP"]
+	path = vendor/XKCP
+	url = https://github.com/XKCP/XKCP.git
+[submodule "vendor/ison"]
+	path = vendor/ison
+	url = https://github.com/iudah/ison.git
+[submodule "vendor/memalloc"]
+	path = vendor/memalloc
+	url = https://github.com/iudah/memalloc.git
+[submodule "vendor/zot"]
+	path = vendor/zot
+	url = https://github.com/iudah/zot.git

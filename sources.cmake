@@ -1,12 +1,13 @@
 set(SOURCE_FILES
     src/main.c
-    src/sha256.c
     src/book.c
+    src/book_io.c
+    src/book_json.c
+    src/book_crypto.c
+    src/cli.c
     src/node_net.c
     src/router.c
     src/http_handlers.c
     src/wallet.c
-    src/blake3.c
-    src/base58.c
     src/get_password.c
 )

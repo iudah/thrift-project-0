@@ -1,576 +1,82 @@
 #include "book.h"
 
-#include <errno.h>
+#include <linux/stat.h>
 #include <memory.h>
+#include <sodium.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/user.h>
 #include <time.h>
 #include <unistd.h>
 #include <zot.h>
 
 #include "ds.h"
+#include "genesis_header.h"
 #include "ison.h"
-#include "sha256.h"
 
-#define HASH_STR_LEN 65
-#define HASH_BYTE_LEN 33
-#define BUFFER_LENGTH 4096
+char *bootstrap_path = nullptr;
+char *thrift_path = nullptr;
 
-char *GENESIS_FILE_PATH = 0;
-char *BLOCKS_FILE_PATH = 0;
-char *BLOCKS_TMP_FILE_PATH = 0;
-char *HASH_FILE_PATH = 0;
-char *INCOMPLETE_BLOCK_FILE_PATH = 0;
-char *KEYSTORE_FILE_PATH = 0;
+char *unsigned_tx_to_str(tx_t *txn, uint64_t *len);
 
-char *bootstrap_path = NULL;
-char *thrift_path = NULL;
-
-char *hash_to_string(char *hash, char *buf, int buffer_sz);
-char *unsigned_tx_to_str(tx_t *tx, uint64_t *len);
-
-static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
+static bool add_tx_xxx(book_t *book, char *from, char *txn, uint64_t amount,
                        char *purpose, void *xxx);
 
-void make_thrift_dirs(char *path) {
-  char *slash = path;
-  while ((slash = strstr(slash, "/"))) {
-    *slash = 0;
-    if (path[0] != 0 && access(path, F_OK) != 0) {
-      mkdir(path, 0777);
-      LOG("mkdir(%s)", path);
-    }
-    *slash = '/';
-    ++slash;
-  }
-  LOG("mkdir(%s)", path);
-}
-
-void set_paths() {
-  char tmp_path[512];
-  int len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/genesis.json",
-                     thrift_path);
-  GENESIS_FILE_PATH = zstrdup(tmp_path);
-  LOG("%s", tmp_path);
-
-  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/blocks.json",
-                 thrift_path);
-  BLOCKS_FILE_PATH = zstrdup(tmp_path);
-  LOG("%s", tmp_path);
-
-  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/hash.hash",
-                 thrift_path);
-  HASH_FILE_PATH = zstrdup(tmp_path);
-  LOG("%s", tmp_path);
-
-  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/~blocks.json",
-                 thrift_path);
-  BLOCKS_TMP_FILE_PATH = zstrdup(tmp_path);
-  LOG("%s", tmp_path);
-
-  len = snprintf(tmp_path, sizeof(tmp_path),
-                 "%s/.thrift/db/incomplete_block.json", thrift_path);
-  INCOMPLETE_BLOCK_FILE_PATH = zstrdup(tmp_path);
-  LOG("%s", tmp_path);
-
-  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/ks.json",
-                 thrift_path);
-  KEYSTORE_FILE_PATH = zstrdup(tmp_path);
-  LOG("%s", tmp_path);
-
-  len = snprintf(tmp_path, sizeof(tmp_path), "%s/.thrift/db/", thrift_path);
-  if (access(tmp_path, F_OK) != 0) {
-    make_thrift_dirs(tmp_path);
-  }
-  LOG("%s", GENESIS_FILE_PATH);
-  LOG("%s", KEYSTORE_FILE_PATH);
-}
-
-bool load_genesis(book_t *book) {
-
-  FILE *genesis_file = fopen(GENESIS_FILE_PATH, "r");
-
-  if (!genesis_file) {
-    LOG("Could not open genesis.json: %s", strerror(errno));
-    genesis_file = fopen(GENESIS_FILE_PATH, "w");
-    if (!genesis_file) {
-      LOG_ERROR("Could not write '%s': %s", GENESIS_FILE_PATH, strerror(errno));
-      return false;
-    }
-
-    const char *genesis_json =
-        "{"
-        "  \"genesis_time\": \"2024-08-15T00:00:00.000000000Z\", "
-        "  \"chain_id\": \"thrift-project-0\", "
-        "  \"balances\": ["
-        "    { \"name\": \"originator\", \"credit\": 2500000 }"
-        "  ]"
-        "}";
-    fwrite(genesis_json, 1, strlen(genesis_json), genesis_file);
-
-    fclose(genesis_file);
-    genesis_file = fopen(GENESIS_FILE_PATH, "r");
-  }
-
-  json_value *json = json_parse_file(genesis_file);
-
-  fclose(genesis_file);
-
-  if (json_value_type(json) != DICT)
-    return false;
-
-  json_value *balances = json_query(json, "balances");
-
-  if (json_value_type(balances) != LIST)
-    return false;
-
-  array_t *balance_list = json_value_data(balances).ptr;
-
-  json_value *bal_detail;
-  char *name;
-  double credit;
-
-  uint32_t n_balances = array_length(balance_list);
-  for (uint32_t i = 0; i < n_balances; i++) {
-    bal_detail = array_get(balance_list, i);
-
-    json_value *name_query = json_query(bal_detail, "name");
-    if (json_value_type(name_query) != TEXT) {
-      return false;
-    }
-
-    name = json_value_data(name_query).string;
-
-    json_value *credit_query = json_query(bal_detail, "credit");
-    if (json_value_type(credit_query) != FLOATS) {
-      return false;
-    }
-
-    credit = json_value_data(credit_query).number;
-
-    map_value *book_bal = hash_map_get(book->balances, name);
-
-    if (book_bal) {
-      if (json_value_type(book_bal) != FLOATS) {
-        return false;
-      }
-      credit += json_value_data(credit_query).number;
-      hash_map_replace_number(book->balances, name, credit);
-    } else {
-      array_append_str(book->users, name);
-      hash_map_add_number(book->balances, name, credit);
-    }
-  }
-
-  return true;
-}
-
-bool load_blocks(book_t *book) {
-  FILE *blocks_file = fopen(BLOCKS_FILE_PATH, "r");
-
-  if (!blocks_file) {
-    LOG("Could not open blocks.json: %s", strerror(errno));
-    return true;
-  } else {
-    LOG("Opened blocks.json");
-  }
-
-  if (!parse_block(book, blocks_file)) {
-    fclose(blocks_file);
-    return false;
-  }
-  fclose(blocks_file);
-
-  struct stat st;
-  FILE *incomplete_block_file = fopen(INCOMPLETE_BLOCK_FILE_PATH, "r+");
-
-  if (errno && errno != ENOENT) {
-    LOG_ERROR("Could not open incomplete_block.json: %s", strerror(errno));
-    return false;
-  }
-
-  if (incomplete_block_file) {
-    fstat(fileno(incomplete_block_file), &st);
-
-    if (st.st_size > 1) {
-      if (!parse_block(book, incomplete_block_file))
-        return false;
-      fclose(incomplete_block_file);
-    }
-    fclose(incomplete_block_file);
-  }
-  return true;
-}
-
-book_t *load_book() {
-  if (thrift_path == NULL) {
-    char *HOME = getenv("HOME");
-    thrift_path = zstrdup(HOME);
-  }
-
-  char path[512];
-  memcpy(path, thrift_path, strlen(thrift_path) + 1);
-
-  struct stat st = {0};
-
-  char *paths[] = {"/.thrift", "/db"};
-
-  for (int i = 0; i < 2; i++) {
-    strncat(path, paths[i], strlen(paths[i]) + 1);
-
-    if (stat(path, &st) < 0) {
-      if (mkdir(path, 07777) < 0) {
-        LOG_ERROR("Could not make directory '%s': %s", path, strerror(errno));
-        return NULL;
-      }
-    }
-  }
-
-  book_t *book = zcalloc(1, sizeof(*book));
-  book->balances = create_hash_map();
-  book->users = create_array();
-  book->block.txs = create_array();
-
-  if (!load_genesis(book)) {
-    return NULL;
-  }
-
-  if (!load_blocks(book)) {
-    return NULL;
-  }
-
-  return book;
-}
-
-bool parse_block(book_t *book, FILE *blocks_file) {
-  json_value *json = json_parse_file(blocks_file);
-  if (!json) {
-    LOG_ERROR("Failed to parse blocks.json");
-    return false;
-  }
-
-  bool is_single_block = json_value_type(json) == DICT;
-
-  if (json_value_type(json) != LIST && !is_single_block) {
-    return false;
-  }
-  array_t *blocks = json_value_data(json).ptr;
-  uint64_t no_of_blocks = is_single_block ? 1 : array_length(blocks);
-
-  for (uint64_t i = 0; i < no_of_blocks; i++) {
-    json_value *block_json = is_single_block ? json : array_get(blocks, i);
-
-    if (json_value_type(block_json) != DICT) {
-      return false;
-    }
-
-    char buf[4096];
-
-    uint32_t len = 0;
-    block_t block;
-    json_value *q = json_query(block_json, "parent_hash");
-    if (json_value_type(q) != TEXT) {
-      return false;
-    }
-    memcpy(block.parent_hash, json_value_data(q).string, 64);
-    block.parent_hash[64] = 0;
-    len += snprintf(buf + len, BUFFER_LENGTH - len, "{\"parent_hash\": \"%s\",",
-                    block.parent_hash);
-
-    q = json_query(block_json, "block_time");
-    if (json_value_type(q) != TEXT) {
-      return false;
-    }
-    memcpy(block.block_time, json_value_data(q).string, 20);
-    block.block_time[20] = 0;
-    len += snprintf(buf + len, BUFFER_LENGTH - len, "\"block_time\": \"%s\",",
-                    block.block_time);
-
-    // set time last block was added
-    if (i == (no_of_blocks - 1)) {
-      struct tm tm;
-      strptime(block.block_time, "%Y-%m-%dT%H:%M:%SZ", &tm);
-      book->last_block_time = timegm(&tm);
-    }
-
-    q = json_query(block_json, "block_index");
-    if (json_value_type(q) != FLOATS) {
-      return false;
-    }
-    block.block_idx = (int)json_value_data(q).number;
-    len += snprintf(buf + len, BUFFER_LENGTH - len, "\"block_index\": %i,",
-                    block.block_idx);
-
-    q = json_query(block_json, "txs");
-    if (json_value_type(q) != LIST) {
-      return false;
-    }
-    array_t *txs = json_value_data(q).ptr;
-    len += snprintf(buf + len, BUFFER_LENGTH - len, "\"txs\": [");
-    for (uint64_t j = 0; j < array_length(txs); j++) {
-      json_value *saved_tx = array_get(txs, j);
-
-      tx_t tx;
-
-      if (!tx_from_json(&tx, saved_tx, book)) {
-        LOG_ERROR("Failed to process transaction from JSON");
-        return false;
-      }
-
-      len +=
-          snprintf(buf + len, BUFFER_LENGTH - len,
-                   "{\"from\":\"%s\",\"to\":\"%s\",\"value\":%f,\"for\":\"%s\","
-                   "\"reward\":%s},",
-                   tx.from, tx.to, tx.amount, tx.purpose,
-                   tx.is_reward ? "true" : "false");
-    }
-
-    q = json_query(block_json, "hash");
-    if (json_value_type(q) != TEXT) {
-      return false;
-    }
-    char *stored_hash = json_value_data(q).string;
-
-    len--;
-    len += snprintf(buf + len, BUFFER_LENGTH - len, "]}");
-
-    if (!is_single_block) {
-      SHA256_CTX ctx;
-      sha256_init(&ctx);
-      char hash[32];
-      sha256_update(&ctx, (BYTE *)buf, len);
-      sha256_final(&ctx, (uint8_t *)hash);
-      snprintf(buf, sizeof(buf), "%s",
-               hash_to_string(hash, (char[HASH_STR_LEN]){}, HASH_STR_LEN));
-
-      if (strncmp(buf, stored_hash, HASH_BYTE_LEN)) {
-        printf("Error: Invalid block. Expected %s got %s\n", buf, stored_hash);
-        return false;
-      }
-      memcpy(book->block.parent_hash, stored_hash, 64);
-      book->block.parent_hash[64] = 0;
-    }
-  }
-
-  return true;
-}
-
-bool verify_hash(book_t *book, FILE *tx_file) {
-  char hash[HASH_BYTE_LEN];
-  hash_txs(tx_file, hash);
-
-  if (!strncmp(hash, book->block.parent_hash, 32)) {
-    return true;
-  }
-
-  char expected_hash[HASH_STR_LEN], actual_hash[HASH_STR_LEN];
-  LOG_ERROR("Hash verification failed\nExpected: %s\nActual:   %s",
-            hash_to_string(hash, expected_hash, HASH_STR_LEN),
-            hash_to_string(book->block.parent_hash, actual_hash, HASH_STR_LEN));
-  return false;
-}
-
-bool hash_txs(FILE *f, char *hash) {
-  fseek(f, 0, SEEK_SET);
-
-  struct stat st;
-  fstat(fileno(f), &st);
-
-  unsigned char *bytes = zcalloc(1, st.st_size);
-
-  fread(bytes, 1, st.st_size, f);
-
-  SHA256_CTX ctx;
-
-  sha256_init(&ctx);
-  char buf[256];
-
-  sha256_update(&ctx, bytes, st.st_size);
-
-  sha256_final(&ctx, (uint8_t *)hash);
-
-  FILE *hash_file = fopen(HASH_FILE_PATH, "w");
-  fwrite(hash, HASH_STR_LEN, 1, hash_file);
-  fclose(hash_file);
-
-  zfree(bytes);
-
-  return true;
-}
-
-bool hash_block(book_t *book, char *string, uint64_t *string_len, char *hash) {
-  time_t now = time(NULL);
-  struct tm *tm_info = gmtime(&now);
-
-  strftime(book->block.block_time, sizeof(book->block.block_time), "%FT%T",
-           tm_info);
-  char buf[BUFFER_LENGTH];
-  char *buffer = string ? string : buf;
-  uint64_t len = 0;
-
-  len += snprintf(buffer + len, BUFFER_LENGTH - len,
-                  "{\"parent_hash\": \"%s\","
-                  "\"block_time\": \"%sZ\","
-                  "\"block_index\": %i,"
-                  "\"txs\": [",
-                  book->block.parent_hash, book->block.block_time,
-                  book->block.block_idx);
-
-  uint32_t n_tx = array_length(book->block.txs);
-
-  for (uint64_t i = 0; i < n_tx; i++) {
-    tx_t *tx = array_get_ptr(book->block.txs, i);
-
-    len +=
-        snprintf(buffer + len, BUFFER_LENGTH - len,
-                 "{\"from\":\"%s\",\"to\":\"%s\",\"value\":%f,\"for\":\"%s\","
-                 "\"reward\":%s},",
-                 tx->from, tx->to, tx->amount, tx->purpose,
-                 tx->is_reward ? "true" : "false");
-  }
-
-  len--;
-  len += snprintf(buffer + len, BUFFER_LENGTH - len, "]}");
-
-  SHA256_CTX ctx;
-  sha256_init(&ctx);
-  sha256_update(&ctx, (BYTE *)buffer, len);
-  sha256_final(&ctx, (uint8_t *)hash);
-
-  if (string_len)
-    *string_len = len;
-
-  return true;
-}
-
-bool tx_from_json(tx_t *tx, json_value *saved_tx, book_t *book) {
-
-  if (json_value_type(saved_tx) != DICT) {
-    return false;
-  }
-
-  json_value *q;
-
-  q = json_query(saved_tx, "value");
-  tx->amount = json_value_data(q).number;
-
-  q = json_query(saved_tx, "from");
-  tx->from = json_value_data(q).string;
-
-  q = json_query(saved_tx, "to");
-  tx->to = json_value_data(q).string;
-
-  q = json_query(saved_tx, "reward");
-  tx->is_reward = q != NULL && json_value_data(q).boolean;
-
-  q = json_query(saved_tx, "for");
-  tx->purpose = q ? json_value_data(q).string : NULL;
-  if (!tx->purpose) {
-    tx->purpose = zstrdup("");
-  }
-
-  q = json_query(saved_tx, "signature");
-  if (q) {
-    LOG("Signature not found");
-    memcpy(tx->signature,
-           hex_decode(json_value_data(q).string,
-                      strlen(json_value_data(q).string)),
-           sizeof(tx->signature));
-  }
-
-  q = json_query(saved_tx, "public_key");
-  if (q) {
-    LOG("Public key not found");
-    tx->public_key = hex_decode(json_value_data(q).string,
-                                strlen(json_value_data(q).string));
-  }
-
-  return effect_tx(book->balances, book->users, tx);
-}
-
-bool effect_tx(hash_map *balances, array_t *users, tx_t *tx) {
-
-  if (!is_valid_tx(tx)) {
+bool effect_tx(book_t *book, array_t *users, tx_t *txn) {
+  (void)users;
+  if (!is_valid_tx(txn)) {
     LOG("Transaction is invalid");
     return false;
   }
 
-  if (tx->is_reward) {
-    map_value *originator_pair = hash_map_get(balances, "originator");
-    if (!originator_pair) {
-      LOG_ERROR("Originator account missing in reward transaction");
-      return false;
-    }
-    if (json_value_type(originator_pair) != FLOATS) {
-      return false;
-    }
-    double credit = json_value_data(originator_pair).number;
-    credit += tx->amount;
-    hash_map_replace_number(balances, "originator", credit);
-    return true;
-  }
-
-  map_value *sender = hash_map_get(balances, tx->from);
-  if (!sender) {
-    LOG_ERROR("Sender account '%s' not found", tx->from);
+  auto total = txn->amount + txn->fee;
+  if (!tft_debit(book, txn->from, total))
     return false;
-  }
-  if (json_value_type(sender) != FLOATS) {
+
+  if (!tft_credit(book, txn->to, txn->amount))
     return false;
-  }
 
-  volatile double net = tx->amount + tx->amount * 1e-6;
-  double s_balance = json_value_data(sender).number;
-  if (s_balance < net) {
-    LOG_ERROR("Insufficient funds for %s: %.2f < required %.2f", tx->from,
-              s_balance, net);
-    return false;
-  }
-
-  s_balance -= net;
-  hash_map_replace_number(balances, tx->from, s_balance);
-
-  map_value *originator = hash_map_get(balances, "originator");
-  double fee = json_value_data(originator).number + tx->amount * 1e-6;
-
-  map_value *receiver = hash_map_get(balances, tx->to);
-  if (receiver) {
-    if (json_value_type(receiver) != FLOATS) {
-      return false;
-    }
-    double r_balance = json_value_data(receiver).number + tx->amount;
-    hash_map_replace_number(balances, tx->to, r_balance);
-  } else {
-    array_append_str(users, tx->to);
-    hash_map_add_number(balances, tx->to, tx->amount);
-  }
+  book->block.fee += txn->fee;
 
   return true;
-}
-
-bool add_tx(book_t *book, char *from, char *to, double amount, char *purpose) {
-  return add_tx_xxx(book, from, to, amount, purpose, NULL);
 }
 
 static char *empty_str = "";
-static bool add_tx_xxx(book_t *book, char *from, char *to, double amount,
-                       char *purpose, void *xxx) {
-  tx_t tx_ = {.from = from,
-              to,
-              purpose ? purpose : empty_str,
-              amount,
-              xxx == add_tx_xxx};
-  tx_t *tx = zmalloc(sizeof(*tx));
-  memcpy(tx, &tx_, sizeof(tx_));
+bool add_tx(node_context_t *ctx, char *reciever, int64_t amount, char *purpose,
+            bool reward) {
 
-  array_append_ptr(book->block.txs, tx);
-  if (!effect_tx(book->balances, book->users, tx)) {
+  uint64_t str_len = 0;
+  char buffer[BUFFER_BIG] = {0};
+  tx_t txn = {.from = get_address_from_keystore(ctx->user_keystore),
+              reciever,
+              purpose ? purpose : "",
+              amount,
+              reward};
+  char *tx_str = unsigned_tx_to_str(&txn, &str_len);
+
+  bool txn_signed =
+      sign_buffer(txn.signature, tx_str, str_len, ctx->user_keystore);
+  zfree(tx_str);
+
+  if (!txn_signed)
+    return false;
+
+  copy_public_key(ctx->user_keystore, &txn);
+
+  if (!effect_tx(&ctx->book, ctx->book.users, &txn)) {
     return false;
   }
-  return true;
+
+  tx_t *txn_ptr = zmalloc(sizeof(*txn_ptr));
+  memcpy(txn_ptr, &txn, sizeof(txn));
+
+  array_append_ptr(ctx->book.block.txs, txn_ptr);
+
+  // NOTE: Shouldn't txn be sent over to a peer the CLI is being used?
+  // TODO: Do the above.
+  return save_block(&ctx->book, ctx->book.miner);
 }
 
 bool show_balances(book_t *book) {
@@ -580,169 +86,250 @@ bool show_balances(book_t *book) {
   uint32_t n_user = array_length(book->users);
   for (uint32_t i = 0; i < n_user; i++) {
     char *account = array_get_ptr(book->users, i);
-    map_value *q = hash_map_get(book->balances, account);
-    printf("%-18s %18f\n", account, json_value_data(q).number);
+    map_value *usr_bal_json = hash_map_get(book->balances, account);
+    printf("%-18s %18lld\n", account, json_value_data(usr_bal_json).integer);
   }
 
   printf("Tx Hash: %s.\n", book->block.parent_hash);
   return true;
 }
 
-bool add_reward(book_t *book) {
-  return add_tx_xxx(book, "originator", "originator", 70, "reward", add_tx_xxx);
+int64_t compute_reward(int64_t block_idx) {
+  if (block_idx <= 0)
+    return 0;
+  int64_t halvings = block_idx / HALVING_INTERVAL;
+  if (halvings >= 32)
+    return 0;
+  return INITIAL_REWARD >> halvings;
 }
 
-bool save_block(book_t *book) {
-  uint32_t n_tx = array_length(book->block.txs);
-  bool complete = n_tx > 8;
-
-  FILE *blocks_file;
-
-  char buffer[BUFFER_LENGTH];
-  if (complete) {
-    remove(INCOMPLETE_BLOCK_FILE_PATH);
-    book->last_block_time = time(NULL);
-
-    blocks_file = fopen(BLOCKS_FILE_PATH, "r");
-
-    bool found;
-    uint64_t last_occurence = 0, k = 0;
-    while ((fgets(buffer, sizeof(buffer), blocks_file))) {
-      char *c = buffer;
-      while (*c) {
-        switch (*c) {
-        case ']':
-          found = true;
-          last_occurence = k;
-          break;
-        case ' ':
-        case '\n':
-        case '\t':
-        case '\r':
-
-          break;
-        default:
-          if (found)
-            found = false;
-        }
-        c++;
-        k++;
-        if ((int)*c == EOF) {
-          break;
-        }
-      }
-    }
-
-    if (!found) {
-      LOG_ERROR("Invalid JSON structure in blocks file");
-      return false;
-    }
-    printf("%llu", last_occurence);
-    fclose(blocks_file);
-
-    rename(BLOCKS_FILE_PATH, BLOCKS_TMP_FILE_PATH);
-    FILE *tx_tmp_file = fopen(BLOCKS_TMP_FILE_PATH, "r");
-    blocks_file = fopen(BLOCKS_FILE_PATH, "w");
-    if (!blocks_file) {
-      LOG_ERROR("Could not open blocks.json for writing: %s", strerror(errno));
-      return false;
-    }
-
-    int len;
-    while (last_occurence > 0) {
-      len = fread(buffer, 1, sizeof(buffer), tx_tmp_file);
-      if (last_occurence <= len) {
-        buffer[last_occurence] = ',';
-        last_occurence = 0;
-      } else {
-        last_occurence -= len;
-      }
-
-      fwrite(buffer, 1, len, blocks_file);
-    }
-    fclose(tx_tmp_file);
-
-  } else {
-    blocks_file = fopen(INCOMPLETE_BLOCK_FILE_PATH, "w");
-    if (!blocks_file) {
-      LOG_ERROR("thrift could not open %s", INCOMPLETE_BLOCK_FILE_PATH);
-      return false;
-    }
-  }
-  char hash[32];
-  uint64_t len = 0;
-  if (!hash_block(book, buffer, &len, hash)) {
-    return false;
-  }
-  char block_hash[65];
-  hash_to_string((char *)hash, block_hash, HASH_STR_LEN);
-
-  len--;
-  len += snprintf(buffer + len, BUFFER_LENGTH - len, ",\"hash\":\"%s\"}%c\n",
-                  block_hash, complete ? ']' : '\n');
-
-  fwrite(buffer, len, 1, blocks_file);
-  fflush(blocks_file);
-
-  fclose(blocks_file);
-
-  if (complete) {
-    tx_t *tx;
-    uint32_t n_tx = array_length(book->block.txs);
-    while (n_tx) {
-      tx = array_remove_last_ptr(book->block.txs);
-      memcpy(book->block.parent_hash, block_hash, HASH_STR_LEN);
-      zfree(tx);
-      n_tx--;
-    }
-    printf("New block hash: %s.\n", block_hash);
-    fflush(stdout);
-    remove(BLOCKS_TMP_FILE_PATH);
-  }
-  return true;
-}
-
-char *hash_to_string(char *hash, char *buf, int buffer_sz) {
-  snprintf(buf, buffer_sz,
-           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
-           "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
-           "%02x%02x%02x%02x%02x%02x",
-           hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6],
-           hash[7], hash[8], hash[9], hash[10], hash[11], hash[12], hash[13],
-           hash[14], hash[15], hash[16], hash[17], hash[18], hash[19], hash[20],
-           hash[21], hash[22], hash[23], hash[24], hash[25], hash[26], hash[27],
-           hash[28], hash[29], hash[30], hash[31]);
-
-  return buf;
-}
-
-char *unsigned_tx_to_str(tx_t *tx, uint64_t *len) {
-  char tx_json[1024];
-  *len = snprintf(tx_json, 1024,
+char *unsigned_tx_to_str(tx_t *txn, uint64_t *len) {
+  char tx_json[BUFFER_SMALL];
+  *len = snprintf(tx_json, BUFFER_SMALL,
                   ""
-                  "{\n"
-                  "  \"from\": \"%s\",\n"
-                  "  \"to\": \"%s\",\n"
-                  "  \"value\": %g,\n"
-                  "  \"for\": \"%s\",\n"
-                  "  \"reward\": %s\n"
+                  "{"
+                  "\"from\":\"%s\","
+                  "\"to\":\"%s\","
+                  "\"value\":%" PRId64 ","
+                  "\"fee\":%" PRId64 ","
+                  "\"for\":\"%s\""
                   "}",
-                  tx->from, tx->to, tx->amount, tx->purpose,
-                  tx->is_reward ? "true" : "false");
+                  txn->from, txn->to, txn->amount, txn->fee, txn->purpose);
   return zstrdup(tx_json);
 }
 
-bool sign_tx(tx_t *tx, keystore *ks) {
+bool sign_tx(tx_t *txn, keystore *usr_ks) {
   uint64_t len;
-  char *tx_str = unsigned_tx_to_str(tx, &len);
-  if (!sign_buffer(tx->signature, tx_str, len, ks)) {
+  char *tx_str = unsigned_tx_to_str(txn, &len);
+  bool return_state = sign_buffer(txn->signature, tx_str, len, usr_ks);
+  zfree(tx_str);
+  return return_state;
+}
+
+bool is_valid_tx(tx_t *txn) {
+  uint64_t len;
+  char *tx_str = unsigned_tx_to_str(txn, &len);
+  bool validity = pubkey_matches_address(txn->public_key, txn->from) &&
+                  verify_buffer(txn->signature, tx_str, len, txn->public_key);
+  zfree(tx_str);
+  return validity;
+}
+
+bool set_block_time(block_t *blk) {
+  if (!blk)
     return false;
+
+  time_t now = time(nullptr);
+  struct tm *tm_info = gmtime(&now);
+
+  strftime(blk->block_time, sizeof(blk->block_time), "%FT%T", tm_info);
+
+  return true;
+}
+
+bool tft_credit(book_t *book, char *user_address, int64_t amount) {
+  map_value *user_rec = hash_map_get(book->balances, user_address);
+  if (user_rec) {
+    if (json_value_type(user_rec) != INTEGERS) {
+      return false;
+    }
+    int64_t user_balance = json_value_data(user_rec).integer + amount;
+    hash_map_replace_int(book->balances, user_address, user_balance);
+  } else {
+    array_append_str(book->users, user_address);
+    hash_map_add_int(book->balances, user_address, amount);
   }
   return true;
 }
 
-bool is_valid_tx(tx_t *tx) {
-  uint64_t len;
-  char *tx_str = unsigned_tx_to_str(tx, &len);
-  return verify_buffer(tx->signature, tx_str, len, tx->public_key);
+bool tft_debit(book_t *book, char *user_address, int64_t amount) {
+  map_value *user_rec = hash_map_get(book->balances, user_address);
+  if (!user_rec) {
+    return false;
+  }
+  if (json_value_type(user_rec) != INTEGERS) {
+    return false;
+  }
+
+  int64_t user_balance = json_value_data(user_rec).integer;
+  if (user_balance < amount)
+    return false;
+
+  user_balance -= amount;
+
+  hash_map_replace_int(book->balances, user_address, user_balance);
+  return true;
+}
+
+static void book_move(book_t *dst, book_t *src) {
+  dst->balances = src->balances;
+  dst->users = src->users;
+  dst->miner = src->miner;
+  dst->total_supply = src->total_supply;
+  dst->block = src->block;
+  dst->last_block_time = src->last_block_time;
+  zfree(src);
+}
+
+bool effect_block(block_t *blk, book_t *book) {
+  book_t *scratch = book_copy(book);
+  if (!scratch)
+    return false;
+
+  scratch->block.fee = 0;
+
+  uint64_t ntx = array_length(blk->txs);
+  for (uint64_t i = 0; i < ntx; ++i) {
+    tx_t *txn = array_get_ptr(blk->txs, i);
+    if (!effect_tx(scratch, scratch->users, txn))
+      return false;
+  }
+
+  int64_t reward = compute_reward(blk->block_idx);
+  if (scratch->total_supply + reward > MAX_SUPPLY)
+    reward = MAX_SUPPLY - scratch->total_supply;
+  if (reward < 0)
+    reward = 0;
+
+  int64_t miner_credit = reward + scratch->block.fee;
+  if (miner_credit > 0 && blk->miner[0] != '\0') {
+    if (!tft_credit(scratch, blk->miner, miner_credit))
+      return false;
+  }
+  scratch->total_supply += reward;
+  scratch->block.fee = 0;
+
+  book_move(book, scratch);
+  return true;
+}
+
+bool mine_genesis_block(book_t *book) {
+
+  auto genesis_obj = json_parse_string((char *)genesis_json);
+  if (!genesis_obj)
+    return false;
+
+  book->block.block_idx = 0;
+  memset(book->block.parent_hash, '0', SHA256_HEX_LEN);
+
+  json_value *time = json_query(genesis_obj, "genesis_time");
+  if (!time || json_value_type(time) != TEXT)
+    return false;
+  strncpy(book->block.block_time, json_value_data(time).string,
+          STRFTIME_BUF_LEN - 1);
+
+  book->block.miner[0] = '\0';
+  book->block.txs = create_array();
+
+  json_value *allocs = json_query(genesis_obj, "allocations");
+  if (!allocs || json_value_type(allocs) != LIST)
+    return false;
+
+  array_t *backers = json_value_data(allocs).ptr;
+  auto n_backers = array_length(backers);
+  for (uint64_t i = 0; i < n_backers; ++i) {
+    hash_map *backer = array_get_ptr(backers, i);
+    json_value *address = hash_map_get(backer, "address");
+    json_value *amount = hash_map_get(backer, "amount");
+
+    if (!address || json_value_type(address) != TEXT || !amount ||
+        json_value_type(amount) != INTEGERS)
+      continue;
+
+    auto backer_address = json_value_data(address).string;
+    auto backer_amount = json_value_data(amount).integer;
+
+    tft_credit(book, backer_address, backer_amount);
+    book->total_supply += backer_amount;
+  }
+
+  hash_buffer((char *)genesis_json, strlen(genesis_json),
+              book->block.parent_hash);
+
+  book->block.block_idx = 1;
+
+  return true;
+}
+
+bool load_book(book_t *book) {
+  auto home = get_thrift_home();
+
+  book->users = create_array();
+  book->balances = create_hash_map();
+
+  if (!mine_genesis_block(book))
+    return false;
+
+  auto head_txt = join_path(home, "HEAD.txt");
+  if (file_exists(head_txt)) {
+    if (!replay_txs(book, home))
+      return false;
+  } else {
+    if (!setup_file_structure(home)) {
+      return false;
+    }
+  }
+
+  book->block.txs = create_array();
+  book->last_block_time = time(nullptr);
+  set_block_time(&book->block);
+
+  return true;
+}
+
+book_t *book_copy(book_t *src) {
+  if (!src)
+    return nullptr;
+
+  book_t *book = zmalloc(sizeof(*book));
+  if (!book)
+    return nullptr;
+
+  book->miner = src->miner;
+  book->total_supply = src->total_supply;
+  book->last_block_time = src->last_block_time;
+
+  book->users = create_array();
+  auto n_user = array_length(src->users);
+  for (uint32_t i = 0; i < n_user; ++i) {
+    array_append_ptr(book->users, array_get_ptr(src->users, i));
+  }
+
+  book->balances = hash_map_copy(src->balances);
+
+  book->block = src->block;
+  book->block.txs = create_array();
+  auto n_txs = array_length(src->block.txs);
+  for (uint32_t i = 0; i < n_txs; ++i) {
+    tx_t *txn = array_get_ptr(src->block.txs, i);
+    if (!txn)
+      continue;
+    tx_t *copy = zmalloc(sizeof(*copy));
+    if (!copy)
+      continue;
+    memcpy(copy, txn, sizeof(*copy));
+    array_append_ptr(book->block.txs, copy);
+  }
+
+  return book;
 }
