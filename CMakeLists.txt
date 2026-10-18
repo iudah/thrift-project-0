@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Thrift-Project VERSION 1.1.1)
+project(Thrift-Project VERSION 1.1.2)
 
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
