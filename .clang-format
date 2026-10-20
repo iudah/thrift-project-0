@@ -1,0 +1,13 @@
+---
+BasedOnStyle: LLVM
+
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AlignFunctionPointers: true
+AlignConsecutiveMacros: Consecutive
+AlignConsecutiveBitFields: Consecutive
+AlignEscapedNewlines: Right
+AlignOperands: Align
+AlignTrailingComments: true
+AlignArrayOfStructures: Right

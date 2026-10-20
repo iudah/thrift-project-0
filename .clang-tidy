@@ -1,0 +1,29 @@
+---
+Checks:          'clang-diagnostic-*,clang-analyzer-*,modernize-*,performance-*,readability-*,-modernize-use-trailing-return-type,-readability-braces-around-statements,-readability-implicit-bool-conversion'
+WarningsAsErrors: '*'
+HeaderFileExtensions:
+  - ''
+  - h
+  - hh
+  - hpp
+  - hxx
+ImplementationFileExtensions:
+  - c
+  - cc
+  - cpp
+  - cxx
+HeaderFilterRegex: ''
+ExcludeHeaderFilterRegex: ''
+FormatStyle:     none
+CheckOptions:
+  - key:             readability-identifier-naming.VariableCase
+    value:           lower_case
+  - key:             readability-identifier-naming.FunctionCase
+    value:           lower_case
+  - key:             modernize-loop-convert.MaxCopySize
+    value:           16
+  - key:             performance-for-range-copy.WarnOnAllAutoCopy
+    value:           true
+SystemHeaders:   false
+...
+
