@@ -328,10 +328,12 @@ static PyObject *thrift_py_object_sign_tx(thrift_py_object *self,
   SET("fee", PyLong_FromLongLong(txn.fee));
   SET("from", PyUnicode_FromString(txn.from));
   SET("to", PyUnicode_FromString(txn.to));
-  SET("public_key", PyBytes_FromStringAndSize((const char *)txn.public_key,
-                                              PUBLIC_KEY_BIN_LEN));
+  SET("public_key",
+      PyUnicode_FromString(hash_bin_to_hex(txn.signature, PUBLIC_KEY_BIN_LEN,
+                                           (char[PUBLIC_KEY_HEX_LEN]){0})));
   SET("signature",
-      PyBytes_FromStringAndSize((const char *)txn.signature, ED25519_BIN_LEN));
+      PyUnicode_FromString(hash_bin_to_hex(txn.signature, ED25519_BIN_LEN,
+                                           (char[ED25519_HEX_BUF_LEN]){0})));
 #undef SET
   return dict;
 fail:
@@ -347,7 +349,7 @@ static PyMethodDef thrift_py_object_methods[] = {
     {"sign_tx", (PyCFunction)thrift_py_object_sign_tx,
      METH_VARARGS | METH_KEYWORDS, "Create a signed transaction"},
     {"submit_tx", (PyCFunction)thrift_py_object_submit_tx,
-     METH_VARARGS | METH_KEYWORDS, "Create a signed transaction"},
+     METH_VARARGS | METH_KEYWORDS, "Submit a signed transaction"},
     {"balances", (PyCFunction)thrift_py_object_balances, METH_NOARGS,
      "Get on-chain balances"},
     {"wallet", (PyCFunction)thrift_py_object_get_wallet_address, METH_NOARGS,
