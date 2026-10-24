@@ -1,3 +1,6 @@
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+
 #include "book.h"
 #include "ds.h"
 #include "ison.h"
@@ -7,9 +10,6 @@
 #include "zot.h"
 #include <netinet/in.h>
 #include <stdint.h>
-
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
 
 typedef struct {
   PyObject_HEAD;
@@ -61,9 +61,18 @@ static int thrift_py_object_init(thrift_py_object *self, PyObject *args,
     return -1;
   }
 
-  self->ctx.config.address        = zstrdup(self->ctx.config.address);
-  self->ctx.config.thrift_path    = zstrdup(self->ctx.config.thrift_path);
-  self->ctx.config.bootstrap_path = zstrdup(self->ctx.config.bootstrap_path);
+  self->ctx.config.address = zstrdup(self->ctx.config.address);
+  if (!self->ctx.config.thrift_path) {
+    get_thrift_home(&self->ctx);
+  } else {
+    self->ctx.config.thrift_path = zstrdup(self->ctx.config.thrift_path);
+  }
+  if (!self->ctx.config.bootstrap_path) {
+    self->ctx.config.bootstrap_path =
+        join_path(get_thrift_home(&self->ctx), "/bootstrap");
+  } else {
+    self->ctx.config.bootstrap_path = zstrdup(self->ctx.config.bootstrap_path);
+  }
 
   self->ctx.book.lock_fd = -1;
 
@@ -305,7 +314,7 @@ static PyObject *thrift_py_object_sign_tx(thrift_py_object *self,
 
   copy_public_key(self->ctx.user_keystore, &txn);
 
-  if (sign_tx(&txn, self->ctx.user_keystore)) {
+  if (!sign_tx(&txn, self->ctx.user_keystore)) {
     PyErr_SetString(PyExc_RuntimeError, "transaction signing failed");
     return nullptr;
   }
@@ -329,7 +338,7 @@ static PyObject *thrift_py_object_sign_tx(thrift_py_object *self,
   SET("from", PyUnicode_FromString(txn.from));
   SET("to", PyUnicode_FromString(txn.to));
   SET("public_key",
-      PyUnicode_FromString(hash_bin_to_hex(txn.signature, PUBLIC_KEY_BIN_LEN,
+      PyUnicode_FromString(hash_bin_to_hex(txn.public_key, PUBLIC_KEY_BIN_LEN,
                                            (char[PUBLIC_KEY_HEX_LEN]){0})));
   SET("signature",
       PyUnicode_FromString(hash_bin_to_hex(txn.signature, ED25519_BIN_LEN,

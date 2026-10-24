@@ -45,24 +45,53 @@ target_link_libraries(thrift PRIVATE blake3)
 target_link_libraries(thrift PRIVATE XKCP)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-    if(MSVC)
-        target_compile_options(thrift PRIVATE /Zi /Od /RTC1)
-        target_link_options(thrift PRIVATE /DEBUG)
-    else()
-        target_compile_options(thrift PRIVATE -g -O0 -fno-omit-frame-pointer)
-    endif()
-    if(ENABLE_SANITIZERS AND NOT MSVC)
-        target_compile_options(thrift PRIVATE -fsanitize=address -fsanitize=undefined)
-        target_link_options(thrift PRIVATE -fsanitize=address -fsanitize=undefined)
-    endif()
+  if(MSVC)
+    target_compile_options(thrift PRIVATE /Zi /Od /RTC1)
+    target_link_options(thrift PRIVATE /DEBUG)
+  else()
+    target_compile_options(thrift PRIVATE -g -O0 -fno-omit-frame-pointer)
+  endif()
+  if(ENABLE_SANITIZERS AND NOT MSVC)
+    target_compile_options(thrift PRIVATE -fsanitize=address -fsanitize=undefined)
+    target_link_options(thrift PRIVATE -fsanitize=address -fsanitize=undefined)
+  endif()
 endif()
 
 if((CMAKE_SYSTEM_PROCESSOR MATCHES "arm" OR CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64") AND NOT MSVC)
-    check_c_compiler_flag("-mfpu=neon" HAS_NEON_FLAG)
-    if(HAS_NEON_FLAG)
-        target_compile_options(thrift PRIVATE -mfpu=neon)
-    endif()
+  check_c_compiler_flag("-mfpu=neon" HAS_NEON_FLAG)
+  if(HAS_NEON_FLAG)
+    target_compile_options(thrift PRIVATE -mfpu=neon)
+  endif()
 endif()
+
+find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+
+Python3_add_library(thriftproject MODULE
+    pylib/py_api.c
+    src/book.c
+    src/book_io.c
+    src/book_json.c
+    src/book_crypto.c
+    src/wallet.c
+    src/get_password.c
+    src/router.c
+    src/node_net.c
+    src/http_handlers.c
+)
+
+target_include_directories(thriftproject PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/vendor/thrift_crypto
+    $<BUILD_INTERFACE:${TRUE_BINARY_DIR}/generated>
+)
+
+target_compile_options(thriftproject PRIVATE
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fPIC>
+)
+target_link_libraries(thriftproject PRIVATE
+    ison memalloc zot thrift_crypto XKCP sodium blake3 pthread m
+)
 
 # if(BUILD_TESTS)
 #     include(include_google_test.cmake)

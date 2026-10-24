@@ -20,7 +20,6 @@
 #include "ison.h"
 #include "node_net.h"
 #include "router.h"
-#include "src/http_helper.h"
 
 #define BUFFER_SIZE 4096
 #define BACKLOG     8000
