@@ -4,7 +4,7 @@
 #include <Thrift-Project.h>
 #include <arpa/inet.h>
 #include <inttypes.h>
-#include <linux/in.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>

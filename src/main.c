@@ -28,23 +28,18 @@ int main(int argc, char *argv[]) {
          THRIFT_PROJECT_VERSION_MAJOR, THRIFT_PROJECT_VERSION_MINOR,
          THRIFT_PROJECT_VERSION_PATCH);
 
-  node_context_t ctx = {nullptr};
+  node_context_t ctx = {.book.lock_fd = -1, .user_keystore = nullptr};
 
   if (!parse_cli_args(argc, argv, &ctx.config)) {
     print_help();
   }
-
-  if (ctx.config.thrift_path)
-    set_thrift_home(ctx.config.thrift_path);
-  if (ctx.config.bootstrap_path)
-    set_bootstrap_path(ctx.config.bootstrap_path);
 
   if (__builtin_popcount(ctx.config.tasks) != 1) {
     print_help();
     return -1;
   }
 
-  if (!load_book(&ctx.book)) {
+  if (!load_book(&ctx.book, &ctx)) {
     LOG_ERROR("Failed to load book.");
     return -1;
   }
@@ -56,7 +51,7 @@ int main(int argc, char *argv[]) {
 
   if (ctx.config.tasks == CREATE_WALLET) {
     ctx.user_keystore = init_keystore();
-    auto key_store = create_wallet(ctx.user_keystore);
+    auto key_store    = create_wallet(ctx.user_keystore, nullptr, &ctx);
     if (!key_store) {
       LOG_ERROR("Wallet creation failed.");
       return -1;
@@ -66,7 +61,7 @@ int main(int argc, char *argv[]) {
   }
 
   ctx.user_keystore = init_keystore();
-  if (!load_keystore(ctx.user_keystore)) {
+  if (!load_keystore(ctx.user_keystore, nullptr, &ctx)) {
     LOG_ERROR("Failed to load keystore.");
     return -1;
   }

@@ -53,7 +53,7 @@ array_t *parse_block(book_t *book, FILE *blocks_file) {
   return blocks;
 }
 
-bool save_block(book_t *book, char *miner) {
+bool save_block(book_t *book, char *miner, node_context_t *ctx) {
   block_t *block = &book->block;
   if (array_length(block->txs) == 0) {
     return false;
@@ -74,7 +74,7 @@ bool save_block(book_t *book, char *miner) {
   char hash_path[SHA256_HEX_BUF_LEN + EXT_LEN];
   snprintf(hash_path, sizeof(hash_path), "blocks/%s.json", block_hash_hex);
 
-  auto block_path = join_path(get_thrift_home(), hash_path);
+  auto block_path = join_path(get_thrift_home(ctx), hash_path);
 
   FILE *block_file = fopen(block_path, "wb");
   if (!block_file)
@@ -82,7 +82,7 @@ bool save_block(book_t *book, char *miner) {
   fprintf(block_file, "%s", buffer);
   fclose(block_file);
 
-  FILE *head = fopen(join_path(get_thrift_home(), "HEAD.txt"), "wb");
+  FILE *head = fopen(join_path(get_thrift_home(ctx), "HEAD.txt"), "wb");
   if (!head)
     return false;
   fprintf(head, "%s", block_hash_hex);
@@ -219,38 +219,22 @@ bool replay_txs(book_t *book, const char *restrict home_path) {
   return true;
 }
 
-static char *node_bootstrap_path = nullptr;
-bool         set_bootstrap_path(char *path) {
-  node_bootstrap_path = zstrdup(path);
-  return true;
-}
+const char *get_thrift_home(node_context_t *ctx) {
 
-static char *thrift_home = nullptr;
-bool         set_thrift_home(char *path) {
-  thrift_home = zstrdup(path);
-  return true;
-}
-
-const char *get_thrift_home() {
-
-  if (thrift_home != nullptr) {
-    return thrift_home;
+  if (ctx->config.thrift_path != nullptr) {
+    return ctx->config.thrift_path;
   }
 
   const char *thrift_env = getenv("THRIFT_HOME");
   if (thrift_env != nullptr && thrift_env[0] != '\0') {
-    thrift_home = zstrdup(thrift_env);
-    return thrift_home;
+    ctx->config.thrift_path = zstrdup(thrift_env);
+    return ctx->config.thrift_path;
   }
 
   const char *home = getenv("HOME");
   if (home != nullptr && home[0] != '\0') {
-    size_t length = strlen(home) + strlen("/.thrift") + 1;
-    thrift_home   = (char *)zmalloc(length);
-    if (thrift_home != nullptr) {
-      thrift_home = join_path(home, ".thrift/");
-    }
-    return thrift_home;
+    ctx->config.thrift_path = join_path(home, ".thrift/");
+    return ctx->config.thrift_path;
   }
 
   return nullptr;
@@ -265,11 +249,11 @@ bool setup_file_structure(const char *home) {
   return make_dir(path) == 0;
 }
 
-bool load_peers(array_t *peers) {
+bool load_peers(array_t *peers, node_context_t *ctx) {
   if (!peers)
     return false;
 
-  FILE *peers_json = fopen(join_path(get_thrift_home(), "peers.json"), "rb");
+  FILE *peers_json = fopen(join_path(get_thrift_home(ctx), "peers.json"), "rb");
   if (!peers_json)
     return false;
 
@@ -317,9 +301,9 @@ bool load_peers(array_t *peers) {
   return true;
 }
 
-bool save_peers(array_t *peers) {
+bool save_peers(array_t *peers, node_context_t *ctx) {
 
-  FILE *peers_json = fopen(join_path(get_thrift_home(), "peers.json"), "wb");
+  FILE *peers_json = fopen(join_path(get_thrift_home(ctx), "peers.json"), "wb");
   fwrite("[", 1, 1, peers_json);
 
   uint32_t n_peers = array_length(peers);

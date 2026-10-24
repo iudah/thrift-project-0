@@ -1,6 +1,7 @@
 #ifndef _WALLET_H_
 #define _WALLET_H_
 
-bool keystore_exists();
+#include "book.h"
+bool keystore_exists(node_context_t *ctx);
 
 #endif

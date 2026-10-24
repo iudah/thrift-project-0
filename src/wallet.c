@@ -1,5 +1,3 @@
-// wallet.c – refactored with static arrays
-
 #include "libbase58.h"
 #include <SimpleFIPS202.h>
 #include <blake3.h>
@@ -15,13 +13,13 @@
 #include <zot.h>
 
 struct keystore {
-  uint8_t private_key[PRIVATE_KEY_BIN_LEN];
-  uint8_t public_key[PUBLIC_KEY_BIN_LEN];
-  char address[ADDRESS_STR_MAX]; // base58 encoded, null terminated
-  const char *cipher;            // literal string
-  uint8_t ciphertext[CIPHERTEXT_BIN_LEN];
-  uint8_t nonce[NONCE_BIN_LEN];
-  uint8_t salt[SALT_BIN_LEN];
+  uint8_t     private_key[PRIVATE_KEY_BIN_LEN];
+  uint8_t     public_key[PUBLIC_KEY_BIN_LEN];
+  char        address[ADDRESS_STR_MAX]; // base58 encoded, null terminated
+  const char *cipher;                   // literal string
+  uint8_t     ciphertext[CIPHERTEXT_BIN_LEN];
+  uint8_t     nonce[NONCE_BIN_LEN];
+  uint8_t     salt[SALT_BIN_LEN];
   struct {
     const char *type; // literal string
     struct {
@@ -43,7 +41,7 @@ bool generate_key_pair(uint8_t public_key[PUBLIC_KEY_BIN_LEN],
   return crypto_sign_keypair(public_key, private_key) == 0;
 }
 
-bool derive_encryption_key(const char *password,
+bool derive_encryption_key(const char   *password,
                            const uint8_t salt[SALT_BIN_LEN], uint32_t opslimit,
                            uint64_t memlimit, uint8_t key_out[KEY_BIN_LEN]) {
   return crypto_pwhash(key_out, KEY_BIN_LEN, password, strlen(password), salt,
@@ -54,18 +52,19 @@ bool assemble_keystore(keystore *usr_ks, const char *address,
                        const uint8_t private_key[PRIVATE_KEY_BIN_LEN],
                        const uint8_t public_key[PUBLIC_KEY_BIN_LEN],
                        const uint8_t ciphertext[CIPHERTEXT_BIN_LEN],
-                       uint64_t ciphertext_len,
+                       uint64_t      ciphertext_len,
                        const uint8_t nonce[NONCE_BIN_LEN], uint64_t nonce_len,
                        const uint8_t salt[SALT_BIN_LEN], uint64_t salt_len,
                        uint64_t mem_limit, uint64_t op_limit) {
-  if (!usr_ks)
+  if (!usr_ks) {
     return false;
+  }
 
   memcpy(usr_ks->private_key, private_key, PRIVATE_KEY_BIN_LEN);
   memcpy(usr_ks->public_key, public_key, PUBLIC_KEY_BIN_LEN);
   strncpy(usr_ks->address, address, ADDRESS_STR_MAX - 1);
   usr_ks->address[ADDRESS_STR_MAX - 1] = '\0';
-  usr_ks->cipher = "xchacha20-poly1305";
+  usr_ks->cipher                       = "xchacha20-poly1305";
 
   memcpy(usr_ks->ciphertext, ciphertext, ciphertext_len);
   usr_ks->ciphertext_len = ciphertext_len;
@@ -74,7 +73,7 @@ bool assemble_keystore(keystore *usr_ks, const char *address,
   memcpy(usr_ks->salt, salt, salt_len);
   usr_ks->salt_len = salt_len;
 
-  usr_ks->kdf.type = "argon2id";
+  usr_ks->kdf.type       = "argon2id";
   usr_ks->kdf.params.mem = mem_limit;
   usr_ks->kdf.params.ops = op_limit;
 
@@ -107,21 +106,24 @@ bool compute_address(char address[ADDRESS_STR_MAX], uint32_t *address_len,
 }
 
 bool pubkey_matches_address(const uint8_t public_key[SHA256_BIN_BUF_LEN],
-                            const char *address) {
-  char computed_address[ADDRESS_STR_MAX] = {0};
-  uint32_t len = 0;
-  return compute_address(computed_address, &len, public_key) &&
-         (strncmp(computed_address, address, ADDRESS_STR_MAX) == 0);
+                            const char   *address) {
+  char     computed_address[ADDRESS_STR_MAX] = {0};
+  uint32_t len                               = 0;
+  return (bool)((int)compute_address(computed_address, &len, public_key) &&
+                (strncmp(computed_address, address, ADDRESS_STR_MAX) == 0));
 }
 
-bool create_wallet(keystore *usr_ks) {
-  if (keystore_exists()) {
+bool create_wallet(keystore *usr_ks, char *pword, node_context_t *ctx) {
+  if (keystore_exists(ctx)) {
     LOG("Keystore exists.");
     return false;
   }
 
   char password[BUFFER_SMALL];
-  request_password(password);
+  if (!pword) {
+    request_password(password);
+    pword = password;
+  }
 
   uint8_t private_key[PRIVATE_KEY_BIN_LEN];
   uint8_t public_key[PUBLIC_KEY_BIN_LEN];
@@ -133,26 +135,26 @@ bool create_wallet(keystore *usr_ks) {
   uint8_t salt[SALT_BIN_LEN];
   randombytes_buf(salt, sizeof(salt));
 
-  uint32_t op_limit = crypto_pwhash_OPSLIMIT_MODERATE;
+  uint32_t op_limit  = crypto_pwhash_OPSLIMIT_MODERATE;
   uint64_t mem_limit = crypto_pwhash_MEMLIMIT_MODERATE;
 
   uint8_t key[KEY_BIN_LEN];
-  if (!derive_encryption_key(password, salt, op_limit, mem_limit, key)) {
+  if (!derive_encryption_key(pword, salt, op_limit, mem_limit, key)) {
     LOG("Failed to derive encryption key.");
     return false;
   }
 
-  uint8_t ciphertext[CIPHERTEXT_BIN_LEN];
+  uint8_t  ciphertext[CIPHERTEXT_BIN_LEN];
   uint64_t ciphertext_len = CIPHERTEXT_BIN_LEN;
-  uint8_t nonce[NONCE_BIN_LEN];
+  uint8_t  nonce[NONCE_BIN_LEN];
   randombytes_buf(nonce, sizeof(nonce));
 
   crypto_aead_xchacha20poly1305_ietf_encrypt(ciphertext, &ciphertext_len,
                                              private_key, PRIVATE_KEY_BIN_LEN,
                                              nullptr, 0, nullptr, nonce, key);
 
-  char address[ADDRESS_STR_MAX] = {0};
-  uint32_t address_len = ADDRESS_STR_MAX;
+  char     address[ADDRESS_STR_MAX] = {0};
+  uint32_t address_len              = ADDRESS_STR_MAX;
   if (!compute_address(address, &address_len, public_key)) {
     LOG("Failed to compute address.");
     return false;
@@ -164,13 +166,17 @@ bool create_wallet(keystore *usr_ks) {
     return false;
   }
 
-  store_keystore_json(usr_ks, key);
+  if (!store_keystore_json(usr_ks, key, ctx)) {
+    LOG("Failed to store keystore.");
+    return false;
+  }
   return true;
 }
 
-bool store_keystore_json(keystore *usr_ks, const uint8_t key[KEY_BIN_LEN]) {
-  char *ks_file_path = join_path(get_thrift_home(), "keystore.json");
-  FILE *ks_file = fopen(ks_file_path, "wb");
+bool store_keystore_json(keystore *usr_ks, const uint8_t key[KEY_BIN_LEN],
+                         node_context_t *ctx) {
+  char *ks_file_path = join_path(get_thrift_home(ctx), "keystore.json");
+  FILE *ks_file      = fopen(ks_file_path, "wb");
   if (!ks_file) {
     LOG("Could not create file: %s.", ks_file_path);
     return false;
@@ -195,23 +201,23 @@ bool store_keystore_json(keystore *usr_ks, const uint8_t key[KEY_BIN_LEN]) {
          hash_bin_to_hex(mac, MAC_BIN_LEN, (char[MAC_HEX_LEN + 1]){0}));
 
   char keystore_json[BUFFER_SMALL];
-  int len = snprintf(keystore_json, sizeof(keystore_json),
-                     "{\n"
-                     "  \"address\": \"%s\",\n"
-                     "  \"cipher\": \"%s\",\n"
-                     "  \"ciphertext\": \"%s\",\n"
-                     "  \"nonce\": \"%s\",\n"
-                     "  \"salt\": \"%s\",\n"
-                     "  \"kdf\": {\n"
-                     "    \"type\": \"%s\",\n"
-                     "    \"params\": { \"mem\": %" PRIu64 ", \"ops\": %" PRIu32
-                     " }\n"
-                     "  },\n"
-                     "  \"mac\": \"%s\"\n"
-                     "}\n",
-                     usr_ks->address, usr_ks->cipher, ciphertext_hex, nonce_hex,
-                     salt_hex, usr_ks->kdf.type, usr_ks->kdf.params.mem,
-                     usr_ks->kdf.params.ops, mac_hex);
+  int  len = snprintf(keystore_json, sizeof(keystore_json),
+                      "{\n"
+                       "  \"address\": \"%s\",\n"
+                       "  \"cipher\": \"%s\",\n"
+                       "  \"ciphertext\": \"%s\",\n"
+                       "  \"nonce\": \"%s\",\n"
+                       "  \"salt\": \"%s\",\n"
+                       "  \"kdf\": {\n"
+                       "    \"type\": \"%s\",\n"
+                       "    \"params\": { \"mem\": %" PRIu64 ", \"ops\": %" PRIu32
+                      " }\n"
+                       "  },\n"
+                       "  \"mac\": \"%s\"\n"
+                       "}\n",
+                      usr_ks->address, usr_ks->cipher, ciphertext_hex, nonce_hex,
+                      salt_hex, usr_ks->kdf.type, usr_ks->kdf.params.mem,
+                      usr_ks->kdf.params.ops, mac_hex);
 
   fwrite(keystore_json, 1, len, ks_file);
   fclose(ks_file);
@@ -228,7 +234,7 @@ uint32_t concat_mac_text_source(const char *address, const char *ciphertext_hex,
 bool compute_mac(const char *address, const char *ciphertext_hex,
                  const char *nonce_hex, const char *salt_hex,
                  const uint8_t key[KEY_BIN_LEN], uint8_t hash[MAC_BIN_LEN]) {
-  char text[BUFFER_SMALL];
+  char   text[BUFFER_SMALL];
   size_t text_len = concat_mac_text_source(address, ciphertext_hex, nonce_hex,
                                            salt_hex, text);
   return crypto_onetimeauth(hash, (const uint8_t *)text, text_len, key) == 0;
@@ -238,19 +244,22 @@ bool verify_mac(const char *address, const char *ciphertext_hex,
                 const char *nonce_hex, const char *salt_hex,
                 const uint8_t key[KEY_BIN_LEN],
                 const uint8_t hash[MAC_BIN_LEN]) {
-  char text[BUFFER_SMALL];
+  char   text[BUFFER_SMALL];
   size_t text_len = concat_mac_text_source(address, ciphertext_hex, nonce_hex,
                                            salt_hex, text);
   return crypto_onetimeauth_verify(hash, (const uint8_t *)text, text_len,
                                    key) == 0;
 }
 
-bool load_keystore(keystore *usr_ks) {
+bool load_keystore(keystore *usr_ks, char *pword, node_context_t *ctx) {
   char password[BUFFER_SMALL];
-  request_password(password);
+  if (!pword) {
+    request_password(password);
+    pword = password;
+  }
 
-  char *ks_file_path = join_path(get_thrift_home(), "keystore.json");
-  FILE *ks_file = fopen(ks_file_path, "r");
+  char *ks_file_path = join_path(get_thrift_home(ctx), "keystore.json");
+  FILE *ks_file      = fopen(ks_file_path, "r");
   if (!ks_file) {
     LOG("Could not open file: %s.", ks_file_path);
     return false;
@@ -265,36 +274,36 @@ bool load_keystore(keystore *usr_ks) {
 
   json_value *query;
 
-  query = json_query(ks_json, "salt");
-  char *salt_hex = json_value_data(query).string;
+  query            = json_query(ks_json, "salt");
+  char   *salt_hex = json_value_data(query).string;
   uint8_t salt[SALT_BIN_LEN];
   hash_hex_to_bin(salt_hex, strlen(salt_hex), salt);
 
-  query = json_query(ks_json, "kdf");
-  query = json_query(query, "params");
+  query                = json_query(ks_json, "kdf");
+  query                = json_query(query, "params");
   json_value *mem_json = json_query(query, "mem");
-  uint64_t memlimit = (uint64_t)json_value_data(mem_json).integer;
+  uint64_t    memlimit = (uint64_t)json_value_data(mem_json).integer;
   json_value *ops_json = json_query(query, "ops");
-  uint32_t op_limit = (uint32_t)json_value_data(ops_json).integer;
+  uint32_t    op_limit = (uint32_t)json_value_data(ops_json).integer;
 
   uint8_t key[KEY_BIN_LEN];
-  if (!derive_encryption_key(password, salt, op_limit, memlimit, key)) {
+  if (!derive_encryption_key(pword, salt, op_limit, memlimit, key)) {
     LOG("Failed to derive encryption key.");
     return false;
   }
 
-  query = json_query(ks_json, "ciphertext");
-  char *ciphertext_hex = json_value_data(query).string;
+  query                  = json_query(ks_json, "ciphertext");
+  char   *ciphertext_hex = json_value_data(query).string;
   uint8_t ciphertext[CIPHERTEXT_BIN_LEN];
-  size_t ciphertext_len = strlen(ciphertext_hex) / 2;
+  size_t  ciphertext_len = strlen(ciphertext_hex) / 2;
   hash_hex_to_bin(ciphertext_hex, strlen(ciphertext_hex), ciphertext);
 
-  query = json_query(ks_json, "nonce");
-  char *nonce_hex = json_value_data(query).string;
+  query             = json_query(ks_json, "nonce");
+  char   *nonce_hex = json_value_data(query).string;
   uint8_t nonce[NONCE_BIN_LEN];
   hash_hex_to_bin(nonce_hex, strlen(nonce_hex), nonce);
 
-  uint8_t private_key[PRIVATE_KEY_BIN_LEN];
+  uint8_t  private_key[PRIVATE_KEY_BIN_LEN];
   uint64_t private_key_len = PRIVATE_KEY_BIN_LEN;
   if (crypto_aead_xchacha20poly1305_ietf_decrypt(
           private_key, &private_key_len, nullptr, ciphertext, ciphertext_len,
@@ -306,11 +315,11 @@ bool load_keystore(keystore *usr_ks) {
   uint8_t public_key[PUBLIC_KEY_BIN_LEN];
   crypto_sign_ed25519_sk_to_pk(public_key, private_key);
 
-  query = json_query(ks_json, "address");
+  query         = json_query(ks_json, "address");
   char *address = json_value_data(query).string;
 
-  query = json_query(ks_json, "mac");
-  char *mac_hex = json_value_data(query).string;
+  query           = json_query(ks_json, "mac");
+  char   *mac_hex = json_value_data(query).string;
   uint8_t mac[MAC_BIN_LEN];
   hash_hex_to_bin(mac_hex, strlen(mac_hex), mac);
 
@@ -337,7 +346,7 @@ bool sign_buffer(uint8_t signature[ED25519_BIN_LEN], const char *buffer,
 }
 
 bool verify_buffer(const uint8_t signature[ED25519_BIN_LEN], const char *buffer,
-                   uint64_t buffer_length,
+                   uint64_t      buffer_length,
                    const uint8_t public_key[PUBLIC_KEY_BIN_LEN]) {
   return crypto_sign_ed25519_verify_detached(signature, (const uint8_t *)buffer,
                                              buffer_length, public_key) == 0;
@@ -351,8 +360,8 @@ char *get_address_from_keystore(keystore *user_keystore) {
   return user_keystore->address;
 }
 
-bool keystore_exists(void) {
-  char *keystore_path = join_path(get_thrift_home(), "keystore.json");
-  int ret = access(keystore_path, F_OK);
+bool keystore_exists(node_context_t *ctx) {
+  char *keystore_path = join_path(get_thrift_home(ctx), "keystore.json");
+  int   ret           = access(keystore_path, F_OK);
   return ret == 0;
 }
